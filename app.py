@@ -796,6 +796,75 @@ if mode == "📁 Local (upload)":
 
 
 
+"""
+REEMPLAZA el bloque `elif mode == "🐙 GitHub":` completo en app.py
+con este código. Solo cambia la construcción de all_files y el expander
+de modelos — todo lo demás (diff, sidebar, historial) permanece igual.
+"""
+
+# ── helpers to detect branch-native files ────────────────────────────────
+
+def get_branch_native_files(vcs, branch_names: list[str]) -> list[dict]:
+    """
+    Returns only files that are UNIQUE or MODIFIED per branch.
+
+    Strategy:
+      1. Collect every model file + its blob SHA in every branch.
+      2. A file "belongs" to a branch if:
+         a) It doesn't exist in any other branch  →  exclusive file, OR
+         b) Its blob SHA differs from the same file in the default branch
+            (main / first branch)  →  it was modified here.
+      3. If a file has the same SHA in branch X as in main, it was simply
+         inherited and is NOT shown again in branch X.
+    """
+    default_branch = branch_names[0]  # treat first branch (usually main) as base
+
+    # Step 1 — collect {branch: {filename: sha}}
+    branch_file_shas: dict[str, dict[str, str]] = {}
+    branch_file_meta: dict[str, dict[str, dict]] = {}
+
+    for bname in branch_names:
+        models = vcs.list_models(bname)
+        branch_file_shas[bname] = {m["name"]: m["sha"] for m in models}
+        branch_file_meta[bname] = {m["name"]: m for m in models}
+
+    default_shas = branch_file_shas.get(default_branch, {})
+
+    all_files = []
+
+    for bname in branch_names:
+        for fname, sha in branch_file_shas[bname].items():
+            if bname == default_branch:
+                # Always show files that live in the default branch
+                native = True
+            else:
+                # Show only if the file is new or its SHA differs from default
+                default_sha = default_shas.get(fname)
+                native = (default_sha is None) or (sha != default_sha)
+
+            if native:
+                m = branch_file_meta[bname][fname]
+                prefix = fname.replace(".json", "").split("_")[0] if "_" in fname else fname.replace(".json", "")
+                all_files.append({
+                    "branch":      bname,
+                    "name":        fname,
+                    "size_kb":     m["size_kb"],
+                    "label":       f"{bname}/{fname}",
+                    "prefix":      prefix,
+                    "author":      m.get("author", ""),
+                    "short_label": f"{prefix} ({bname})",
+                    "sha":         sha,
+                })
+
+    # Sort: default branch first, then alphabetically by branch+name
+    def sort_key(f):
+        return (0 if f["branch"] == default_branch else 1, f["branch"], f["name"])
+
+    return sorted(all_files, key=sort_key)
+
+
+# ── patched GitHub mode block ─────────────────────────────────────────────
+
 elif mode == "🐙 GitHub":
 
     if not st.session_state.github_connected:
@@ -811,44 +880,40 @@ elif mode == "🐙 GitHub":
             </p>
         </div>
         """, unsafe_allow_html=True)
+
     else:
         vcs = st.session_state.vcs
-        branches = vcs.list_branches()
+        branches   = vcs.list_branches()
         branch_names = [b["name"] for b in branches]
 
-        all_files = []
-        for bname in branch_names:
-            models = vcs.list_models(bname)
-            for m in models:
-                # Extract version prefix (V0, V1, v02, etc.) from filename
-                fname = m["name"].replace(".json", "")
-                prefix = fname.split("_")[0] if "_" in fname else fname
-                all_files.append({
-                    "branch": bname,
-                    "name": m["name"],
-                    "size_kb": m["size_kb"],
-                    "label": f"{bname}/{m['name']}",
-                    "prefix": prefix,
-                    "author": m.get("author", ""),
-                    "short_label": f"{prefix} ({bname})",
-                })
+        # ── Build file list showing only branch-native files ──────────
+        all_files = get_branch_native_files(vcs, branch_names)
 
-        with st.expander(f"📄 Modelos en repositorio ({len(all_files)} archivos en {len(branch_names)} ramas)", expanded=False):
+        # ── Summary expander ──────────────────────────────────────────
+        with st.expander(
+            f"📄 Modelos en repositorio "
+            f"({len(all_files)} archivos propios en {len(branch_names)} ramas)",
+            expanded=False,
+        ):
             for bname in branch_names:
                 bf = [f for f in all_files if f["branch"] == bname]
                 if bf:
-                    st.markdown(f"**`{bname}`** — {len(bf)} modelo(s)")
+                    st.markdown(f"**`{bname}`** — {len(bf)} modelo(s) propios")
                     for f in bf:
-                        st.caption(f"   📄 {f['name']} ({f['size_kb']} KB)")
+                        author_str = f"  ·  {f['author']}" if f["author"] else ""
+                        st.caption(f"   📄 {f['name']} ({f['size_kb']} KB){author_str}")
                 else:
-                    st.markdown(f"**`{bname}`** — sin modelos")
+                    st.markdown(f"**`{bname}`** — sin modelos nuevos (solo hereda de rama base)")
 
         if not all_files:
-            st.info("No hay modelos JSON en el repositorio. Asegúrate de que los archivos estén en la carpeta `models/`.")
+            st.info(
+                "No hay modelos JSON en el repositorio. "
+                "Asegúrate de que los archivos estén en la carpeta `models/`."
+            )
         else:
             file_labels = [f["short_label"] for f in all_files]
 
-            # ── Selectors + Branch graph side by side ───────────────────
+            # ── Selectors + Branch graph ──────────────────────────────
             col_sel, col_graph = st.columns([1, 2])
 
             with col_sel:
@@ -858,7 +923,6 @@ elif mode == "🐙 GitHub":
                     index=min(len(all_files) - 1, 1) if len(all_files) > 1 else 0,
                     format_func=lambda i: file_labels[i],
                     key="gh_head",
-                    help=all_files[min(len(all_files) - 1, 1)]["name"] if len(all_files) > 1 else "",
                 )
                 compare_idx = st.selectbox(
                     "🟣 Comparar con",
@@ -866,22 +930,24 @@ elif mode == "🐙 GitHub":
                     index=0,
                     format_func=lambda i: file_labels[i],
                     key="gh_compare",
-                    help=all_files[0]["name"] if all_files else "",
                 )
 
             with col_graph:
-                svg_html = render_github_branch_graph(all_files, branch_names, head_idx, compare_idx)
+                svg_html = render_github_branch_graph(
+                    all_files, branch_names, head_idx, compare_idx
+                )
                 if svg_html:
                     st.markdown(svg_html, unsafe_allow_html=True)
 
-            # ── Diff ────────────────────────────────────────────────────
-            head_file = all_files[head_idx]
+            # ── Diff ──────────────────────────────────────────────────
+            head_file    = all_files[head_idx]
             compare_file = all_files[compare_idx]
 
             if head_file["label"] == compare_file["label"]:
                 st.warning("Selecciona dos archivos diferentes para comparar.")
             else:
-                hck, cck = head_file["label"], compare_file["label"]
+                hck = head_file["label"]
+                cck = compare_file["label"]
 
                 if hck not in st.session_state.models_cache:
                     with st.spinner(f"Descargando {hck}..."):
@@ -895,35 +961,50 @@ elif mode == "🐙 GitHub":
                         if data:
                             st.session_state.models_cache[cck] = data
 
-                head_raw = st.session_state.models_cache.get(hck)
+                head_raw    = st.session_state.models_cache.get(hck)
                 compare_raw = st.session_state.models_cache.get(cck)
 
                 if head_raw and compare_raw:
-                    head_parsed = parse_model(head_raw)
+                    head_parsed    = parse_model(head_raw)
                     compare_parsed = parse_model(compare_raw)
 
-                    diff = compute_full_diff(compare_parsed, head_parsed)
-                    summary = build_summary(diff)
+                    diff        = compute_full_diff(compare_parsed, head_parsed)
+                    summary     = build_summary(diff)
                     report_text = diff_to_report_text(diff, hck, cck)
 
-                    st.session_state.current_diff = diff
+                    st.session_state.current_diff        = diff
                     st.session_state.current_report_text = report_text
 
                     st.markdown("---")
-                    render_diff_view(diff, summary, head_parsed, compare_parsed, hck, cck, api_key)
+                    render_diff_view(
+                        diff, summary,
+                        head_parsed, compare_parsed,
+                        hck, cck, api_key,
+                    )
 
                     changelog = build_changelog_json(diff, hck, cck)
                     with st.sidebar:
                         st.markdown("---")
                         st.markdown("#### 📥 Changelog")
-                        st.download_button("Descargar changelog JSON", json.dumps(changelog, indent=2, ensure_ascii=False), "changelog.json", "application/json", use_container_width=True)
+                        st.download_button(
+                            "Descargar changelog JSON",
+                            json.dumps(changelog, indent=2, ensure_ascii=False),
+                            "changelog.json",
+                            "application/json",
+                            use_container_width=True,
+                        )
                         st.caption(f"{summary['total']} cambios totales")
                 else:
                     st.error("Error al descargar los modelos del repositorio.")
 
+        # ── Commit history (unchanged) ────────────────────────────────
         if branch_names:
             with st.expander("📜 Historial de commits", expanded=False):
                 hist_branch = st.selectbox("Rama", branch_names, key="hist_branch")
                 commits = vcs.get_commit_history(hist_branch, max_commits=20)
                 for c in commits:
-                    st.markdown(f"**`{c['sha']}`** — {c['message']}  \n<small>{c['author']} · {c['date'][:10]}</small>", unsafe_allow_html=True)
+                    st.markdown(
+                        f"**`{c['sha']}`** — {c['message']}  \n"
+                        f"<small>{c['author']} · {c['date'][:10]}</small>",
+                        unsafe_allow_html=True,
+                    )
