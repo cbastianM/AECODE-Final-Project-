@@ -132,4 +132,4 @@ def build_3d_figure(diff: dict, nodes_old: dict, nodes_new: dict) -> go.Figure:
         margin=dict(l=0, r=0, t=0, b=0),
         height=550,
     )
-    return figV
+    return fig
