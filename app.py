@@ -861,6 +861,71 @@ def get_branch_native_files(vcs, branch_names: list[str]) -> list[dict]:
         return (0 if f["branch"] == default_branch else 1, f["branch"], f["name"])
 
     return sorted(all_files, key=sort_key)
+    """
+REEMPLAZA el bloque `elif mode == "🐙 GitHub":` completo en app.py
+con este código. Solo cambia la construcción de all_files y el expander
+de modelos — todo lo demás (diff, sidebar, historial) permanece igual.
+"""
+
+# ── helpers to detect branch-native files ────────────────────────────────
+
+def get_branch_native_files(vcs, branch_names: list[str]) -> list[dict]:
+    """
+    Returns only files that are UNIQUE or MODIFIED per branch.
+
+    Strategy:
+      1. Collect every model file + its blob SHA in every branch.
+      2. A file "belongs" to a branch if:
+         a) It doesn't exist in any other branch  →  exclusive file, OR
+         b) Its blob SHA differs from the same file in the default branch
+            (main / first branch)  →  it was modified here.
+      3. If a file has the same SHA in branch X as in main, it was simply
+         inherited and is NOT shown again in branch X.
+    """
+    default_branch = branch_names[0]  # treat first branch (usually main) as base
+
+    # Step 1 — collect {branch: {filename: sha}}
+    branch_file_shas: dict[str, dict[str, str]] = {}
+    branch_file_meta: dict[str, dict[str, dict]] = {}
+
+    for bname in branch_names:
+        models = vcs.list_models(bname)
+        branch_file_shas[bname] = {m["name"]: m["sha"] for m in models}
+        branch_file_meta[bname] = {m["name"]: m for m in models}
+
+    default_shas = branch_file_shas.get(default_branch, {})
+
+    all_files = []
+
+    for bname in branch_names:
+        for fname, sha in branch_file_shas[bname].items():
+            if bname == default_branch:
+                # Always show files that live in the default branch
+                native = True
+            else:
+                # Show only if the file is new or its SHA differs from default
+                default_sha = default_shas.get(fname)
+                native = (default_sha is None) or (sha != default_sha)
+
+            if native:
+                m = branch_file_meta[bname][fname]
+                prefix = fname.replace(".json", "").split("_")[0] if "_" in fname else fname.replace(".json", "")
+                all_files.append({
+                    "branch":      bname,
+                    "name":        fname,
+                    "size_kb":     m["size_kb"],
+                    "label":       f"{bname}/{fname}",
+                    "prefix":      prefix,
+                    "author":      m.get("author", ""),
+                    "short_label": f"{prefix} ({bname})",
+                    "sha":         sha,
+                })
+
+    # Sort: default branch first, then alphabetically by branch+name
+    def sort_key(f):
+        return (0 if f["branch"] == default_branch else 1, f["branch"], f["name"])
+
+    return sorted(all_files, key=sort_key)
 
 
 # ── patched GitHub mode block ─────────────────────────────────────────────
