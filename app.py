@@ -464,27 +464,10 @@ with st.sidebar:
         st.markdown("---")
         st.markdown("#### 🔗 Conexión GitHub")
 
-        gh_user = st.text_input(
-            "Usuario GitHub",
-            placeholder="cbastianM",
-            help="Tu nombre de usuario en GitHub.",
-        )
-        gh_token = st.text_input(
-            "Personal Access Token",
-            type="password",
-            help="Token con permisos 'repo'. Genéralo en GitHub → Settings → Developer settings.",
-        )
-        gh_repo_input = st.text_input(
-            "Repositorio (nombre o link)",
-            placeholder="structural-models o https://github.com/user/repo",
-            help="Nombre del repo o URL completa.",
-        )
-
         # Parse repo input: accept full URL or just repo name
         def parse_repo_input(user, repo_input):
             repo_input = repo_input.strip().rstrip("/")
             if "github.com/" in repo_input:
-                # Extract owner/repo from URL
                 parts = repo_input.split("github.com/")[-1].split("/")
                 if len(parts) >= 2:
                     return f"{parts[0]}/{parts[1]}"
@@ -494,27 +477,50 @@ with st.sidebar:
                 return f"{user}/{repo_input}"
             return repo_input
 
-        if st.button("Conectar", use_container_width=True, type="primary"):
-            if gh_token and gh_repo_input:
-                repo_full = parse_repo_input(gh_user, gh_repo_input)
-                try:
-                    from github_vcs import GitHubVCS
-                    vcs = GitHubVCS(gh_token, repo_full)
-                    info = vcs.get_repo_info()
-                    st.session_state.vcs = vcs
-                    st.session_state.github_connected = True
-                    st.session_state.gh_repo_name = repo_full
-                    st.success(f"Conectado a **{info['name']}**")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-            else:
-                st.warning("Ingresa token y repositorio.")
+        if not st.session_state.github_connected:
+            # ── Login form ──────────────────────────────────────────────
+            gh_user = st.text_input(
+                "Usuario GitHub",
+                placeholder="cbastianM",
+            )
+            gh_token = st.text_input(
+                "Personal Access Token",
+                type="password",
+                help="Token con permisos 'repo'.",
+            )
+            gh_repo_input = st.text_input(
+                "Repositorio (nombre o link)",
+                placeholder="structural-models",
+                help="Nombre del repo o URL completa de GitHub.",
+            )
 
-        if st.session_state.github_connected:
-            st.markdown("---")
+            if st.button("Conectar", use_container_width=True, type="primary"):
+                if gh_token and gh_repo_input:
+                    repo_full = parse_repo_input(gh_user, gh_repo_input)
+                    try:
+                        from github_vcs import GitHubVCS
+                        vcs = GitHubVCS(gh_token, repo_full)
+                        info = vcs.get_repo_info()
+                        st.session_state.vcs = vcs
+                        st.session_state.github_connected = True
+                        st.session_state.gh_repo_name = repo_full
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                else:
+                    st.warning("Ingresa token y repositorio.")
+        else:
+            # ── Connected state ─────────────────────────────────────────
             vcs = st.session_state.vcs
             info = vcs.get_repo_info()
-            st.caption(f"📦 {info['name']} · {'🔒 Privado' if info['private'] else '🌐 Público'}")
+            st.success(f"📦 {info['name']}")
+            st.caption(f"{'🔒 Privado' if info['private'] else '🌐 Público'} · {info.get('default_branch', 'main')}")
+
+            if st.button("Desconectar / Cambiar repo", use_container_width=True):
+                st.session_state.github_connected = False
+                st.session_state.vcs = None
+                st.session_state.models_cache = {}
+                st.rerun()
 
     st.markdown("---")
     st.markdown("#### 🤖 API Key (IA)")
@@ -715,133 +721,127 @@ elif mode == "🐙 GitHub":
     else:
         vcs = st.session_state.vcs
 
-        # ── Load branches and models ────────────────────────────────────
+        # ── Load all branches and their models ──────────────────────────
         branches = vcs.list_branches()
         branch_names = [b["name"] for b in branches]
 
+        # Build a flat list of all (branch, filename) pairs
+        all_files = []  # list of {"branch": str, "name": str, "size_kb": float, "label": str}
+        for bname in branch_names:
+            models = vcs.list_models(bname)
+            for m in models:
+                label = f"{bname}/{m['name']}"
+                all_files.append({
+                    "branch": bname,
+                    "name": m["name"],
+                    "size_kb": m["size_kb"],
+                    "label": label,
+                })
+
         # ── Models in repo (collapsible) ────────────────────────────────
-        with st.expander(f"📄 Modelos en repositorio ({len(branch_names)} ramas)", expanded=False):
+        total_files = len(all_files)
+        with st.expander(f"📄 Modelos en repositorio ({total_files} archivos en {len(branch_names)} ramas)", expanded=False):
             for bname in branch_names:
-                models_in_branch = vcs.list_models(bname)
-                if models_in_branch:
-                    st.markdown(f"**`{bname}`** — {len(models_in_branch)} modelo(s)")
-                    for m in models_in_branch:
-                        st.caption(f"   📄 {m['name']} ({m['size_kb']} KB)")
+                branch_files = [f for f in all_files if f["branch"] == bname]
+                if branch_files:
+                    st.markdown(f"**`{bname}`** — {len(branch_files)} modelo(s)")
+                    for f in branch_files:
+                        st.caption(f"   📄 {f['name']} ({f['size_kb']} KB)")
                 else:
                     st.markdown(f"**`{bname}`** — sin modelos")
 
-        # ── Branch selectors ────────────────────────────────────────────
-        col_b1, col_b2 = st.columns(2)
-        with col_b1:
-            head_branch = st.selectbox("🔵 Rama HEAD", branch_names, index=0)
-        with col_b2:
-            compare_branch = st.selectbox(
-                "🟣 Comparar con", branch_names,
-                index=min(1, len(branch_names) - 1),
-            )
+        if not all_files:
+            st.info("No hay modelos JSON en el repositorio. Asegúrate de que los archivos estén en la carpeta `models/`.")
+        else:
+            # ── Independent file selectors ───────────────────────────────
+            file_labels = [f["label"] for f in all_files]
 
-        # ── Create branch (collapsible) ─────────────────────────────────
-        with st.expander("🌿 Crear nueva rama", expanded=False):
-            col_nb1, col_nb2 = st.columns([3, 1])
-            with col_nb1:
-                new_branch = st.text_input(
-                    "Nombre", placeholder="feature/losa-postensada", key="gh_new_branch",
-                    label_visibility="collapsed",
-                )
-            with col_nb2:
-                if st.button("Crear desde HEAD", use_container_width=True, key="gh_btn_create") and new_branch:
-                    try:
-                        vcs.create_branch(new_branch, head_branch)
-                        st.success(f"Rama '{new_branch}' creada desde '{head_branch}'")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-
-        # ── Model selector and comparison ───────────────────────────────
-        head_models = vcs.list_models(head_branch)
-        compare_models = vcs.list_models(compare_branch)
-        head_model_names = [m["name"] for m in head_models]
-        compare_model_names = [m["name"] for m in compare_models]
-        all_model_names = sorted(set(head_model_names + compare_model_names))
-
-        if all_model_names:
             st.markdown("---")
-            selected_model = st.selectbox("📐 Modelo a comparar", all_model_names)
+            col1, col2 = st.columns(2)
+            with col1:
+                head_idx = st.selectbox(
+                    "🔵 HEAD (versión actual)",
+                    range(len(all_files)),
+                    index=min(len(all_files) - 1, 1) if len(all_files) > 1 else 0,
+                    format_func=lambda i: file_labels[i],
+                )
+            with col2:
+                compare_idx = st.selectbox(
+                    "🟣 Comparar con",
+                    range(len(all_files)),
+                    index=0,
+                    format_func=lambda i: file_labels[i],
+                )
 
-            # Check availability
-            in_head = selected_model in head_model_names
-            in_compare = selected_model in compare_model_names
+            head_file = all_files[head_idx]
+            compare_file = all_files[compare_idx]
 
-            if not in_head or not in_compare:
-                missing_in = []
-                if not in_head:
-                    missing_in.append(f"'{head_branch}'")
-                if not in_compare:
-                    missing_in.append(f"'{compare_branch}'")
-                st.warning(f"'{selected_model}' no existe en rama {' ni '.join(missing_in)}")
-            elif head_branch == compare_branch:
-                st.warning("Selecciona dos ramas diferentes para comparar.")
+            if head_file["label"] == compare_file["label"]:
+                st.warning("Selecciona dos archivos diferentes para comparar.")
             else:
-                # Auto-compare (no button needed)
-                with st.spinner("Descargando y analizando modelos..."):
-                    head_cache_key = f"{head_branch}/{selected_model}"
-                    compare_cache_key = f"{compare_branch}/{selected_model}"
+                # ── Load and compare ────────────────────────────────────
+                head_cache_key = head_file["label"]
+                compare_cache_key = compare_file["label"]
 
-                    if head_cache_key not in st.session_state.models_cache:
-                        data = vcs.get_model(selected_model, head_branch)
+                if head_cache_key not in st.session_state.models_cache:
+                    with st.spinner(f"Descargando {head_file['label']}..."):
+                        data = vcs.get_model(head_file["name"], head_file["branch"])
                         if data:
                             st.session_state.models_cache[head_cache_key] = data
 
-                    if compare_cache_key not in st.session_state.models_cache:
-                        data = vcs.get_model(selected_model, compare_branch)
+                if compare_cache_key not in st.session_state.models_cache:
+                    with st.spinner(f"Descargando {compare_file['label']}..."):
+                        data = vcs.get_model(compare_file["name"], compare_file["branch"])
                         if data:
                             st.session_state.models_cache[compare_cache_key] = data
 
-                    head_raw = st.session_state.models_cache.get(head_cache_key)
-                    compare_raw = st.session_state.models_cache.get(compare_cache_key)
+                head_raw = st.session_state.models_cache.get(head_cache_key)
+                compare_raw = st.session_state.models_cache.get(compare_cache_key)
 
-                    if head_raw and compare_raw:
-                        head_parsed = parse_model(head_raw)
-                        compare_parsed = parse_model(compare_raw)
+                if head_raw and compare_raw:
+                    head_parsed = parse_model(head_raw)
+                    compare_parsed = parse_model(compare_raw)
 
-                        diff = compute_full_diff(compare_parsed, head_parsed)
-                        summary = build_summary(diff)
-                        h_name = f"{head_branch}/{selected_model}"
-                        c_name = f"{compare_branch}/{selected_model}"
-                        report_text = diff_to_report_text(diff, h_name, c_name)
+                    diff = compute_full_diff(compare_parsed, head_parsed)
+                    summary = build_summary(diff)
+                    report_text = diff_to_report_text(diff, head_file["label"], compare_file["label"])
 
-                        st.session_state.current_diff = diff
-                        st.session_state.current_report_text = report_text
+                    st.session_state.current_diff = diff
+                    st.session_state.current_report_text = report_text
 
+                    st.markdown("---")
+
+                    render_diff_view(
+                        diff, summary,
+                        head_parsed, compare_parsed,
+                        head_file["label"], compare_file["label"],
+                        api_key,
+                    )
+
+                    # Changelog in sidebar
+                    changelog = build_changelog_json(diff, head_file["label"], compare_file["label"])
+                    with st.sidebar:
                         st.markdown("---")
+                        st.markdown("#### 📥 Changelog")
+                        st.download_button(
+                            "Descargar changelog JSON",
+                            json.dumps(changelog, indent=2, ensure_ascii=False),
+                            "changelog.json", "application/json",
+                            use_container_width=True,
+                        )
+                        st.caption(f"{summary['total']} cambios totales")
 
-                        render_diff_view(diff, summary, head_parsed, compare_parsed, h_name, c_name, api_key)
-
-                        # Changelog in sidebar
-                        changelog = build_changelog_json(diff, h_name, c_name)
-                        with st.sidebar:
-                            st.markdown("---")
-                            st.markdown("#### 📥 Changelog")
-                            st.download_button(
-                                "Descargar changelog JSON",
-                                json.dumps(changelog, indent=2, ensure_ascii=False),
-                                "changelog.json", "application/json",
-                                use_container_width=True,
-                            )
-                            st.caption(f"{summary['total']} cambios totales")
-
-                    else:
-                        st.error("Error al descargar los modelos del repositorio.")
-        else:
-            st.info("No hay modelos JSON en las ramas seleccionadas. Asegúrate de que los archivos estén en la carpeta `models/` del repositorio.")
+                else:
+                    st.error("Error al descargar los modelos del repositorio.")
 
         # ── Commit history (collapsible) ────────────────────────────────
-        with st.expander("📜 Historial de commits", expanded=False):
-            hist_branch = st.selectbox("Rama", branch_names, key="hist_branch")
-            commits = vcs.get_commit_history(hist_branch, max_commits=20)
-            for c in commits:
-                st.markdown(
-                    f"**`{c['sha']}`** — {c['message']}  \n"
-                    f"<small>{c['author']} · {c['date'][:10]}</small>",
-                    unsafe_allow_html=True,
-                )
+        if branch_names:
+            with st.expander("📜 Historial de commits", expanded=False):
+                hist_branch = st.selectbox("Rama", branch_names, key="hist_branch")
+                commits = vcs.get_commit_history(hist_branch, max_commits=20)
+                for c in commits:
+                    st.markdown(
+                        f"**`{c['sha']}`** — {c['message']}  \n"
+                        f"<small>{c['author']} · {c['date'][:10]}</small>",
+                        unsafe_allow_html=True,
+                    )
