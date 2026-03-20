@@ -554,11 +554,13 @@ def render_github_branch_graph(all_files, branch_names, head_idx, compare_idx):
     h_spacing = 50
     v_spacing = 32
     left_pad = 80
-    top_pad = 10
+    top_pad = 20
 
     total_lanes = max(len(branch_names), 1)
-    svg_w = left_pad + len(all_files) * h_spacing + 40
-    svg_h = top_pad + total_lanes * v_spacing + 24
+    svg_w = max(left_pad + len(all_files) * h_spacing + 40, 250)
+    content_h = top_pad + total_lanes * v_spacing + 16
+    legend_y = content_h + 4
+    svg_h = legend_y + 14
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 {svg_w} {svg_h}" '
@@ -567,27 +569,31 @@ def render_github_branch_graph(all_files, branch_names, head_idx, compare_idx):
         '<feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>',
     ]
 
+    # Branch labels and lane lines
     for bname in branch_names:
         lane = branch_lane[bname]
         by = top_pad + lane * v_spacing
         color = BRANCH_COLORS[lane % len(BRANCH_COLORS)]
         parts.append(f'<text x="6" y="{by + 3}" fill="{color}" font-size="8" font-family="JetBrains Mono, monospace" font-weight="600">{bname}</text>')
-        parts.append(f'<line x1="{left_pad - 20}" y1="{by}" x2="{svg_w - 20}" y2="{by}" stroke="{color}" stroke-opacity="0.15" stroke-width="1" stroke-dasharray="4,4"/>')
+        parts.append(f'<line x1="{left_pad - 10}" y1="{by}" x2="{svg_w - 10}" y2="{by}" stroke="{color}" stroke-opacity="0.12" stroke-width="1" stroke-dasharray="4,4"/>')
 
+    # Position each file node on its branch lane
     positions = {}
     for fidx, f in enumerate(all_files):
         lane = branch_lane.get(f["branch"], 0)
         positions[fidx] = (left_pad + fidx * h_spacing, top_pad + lane * v_spacing, f["branch"])
 
+    # Connection lines within same branch
     prev_by_branch = {}
     for fidx in range(len(all_files)):
         px, py, bname = positions[fidx]
         color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
         if bname in prev_by_branch:
             ppx, ppy = prev_by_branch[bname]
-            parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="2" stroke-opacity="0.5"/>')
+            parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1.5" stroke-opacity="0.5"/>')
         prev_by_branch[bname] = (px, py)
 
+    # Fork lines from first branch to others
     seen = set()
     for fidx in range(len(all_files)):
         px, py, bname = positions[fidx]
@@ -597,38 +603,42 @@ def render_github_branch_graph(all_files, branch_names, head_idx, compare_idx):
                 ppx, ppy, pb = positions[pi]
                 if pb == branch_names[0]:
                     color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
-                    parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1.5" stroke-opacity="0.3" stroke-dasharray="6,3"/>')
+                    parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
                     break
 
+    # File nodes
     for fidx in range(len(all_files)):
         px, py, bname = positions[fidx]
         color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
         is_head = fidx == head_idx
         is_compare = fidx == compare_idx
+        prefix = all_files[fidx]["prefix"]
 
         if is_head:
-            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 4}" fill="none" stroke="#06b6d4" stroke-width="1.5" filter="url(#glow2)" stroke-opacity="0.7"/>')
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 3}" fill="none" stroke="#06b6d4" stroke-width="1.5" filter="url(#glow2)" stroke-opacity="0.6"/>')
             parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#06b6d4" stroke="#0a0e17" stroke-width="1.5"/>')
-            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="6" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">{all_files[fidx]["prefix"]}</text>')
+            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="6" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">{prefix}</text>')
         elif is_compare:
-            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 4}" fill="none" stroke="#6366f1" stroke-width="1.5" filter="url(#glow2)" stroke-opacity="0.7"/>')
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 3}" fill="none" stroke="#6366f1" stroke-width="1.5" filter="url(#glow2)" stroke-opacity="0.6"/>')
             parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#6366f1" stroke="#0a0e17" stroke-width="1.5"/>')
-            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="6" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">{all_files[fidx]["prefix"]}</text>')
+            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="6" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">{prefix}</text>')
         else:
-            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#1e2d42" stroke="{color}" stroke-width="2"/>')
-            parts.append(f'<text x="{px}" y="{py + 3}" fill="#94a3b8" font-size="6" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">{all_files[fidx]["prefix"]}</text>')
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#1e2d42" stroke="{color}" stroke-width="1.5"/>')
+            parts.append(f'<text x="{px}" y="{py + 3}" fill="#94a3b8" font-size="6" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">{prefix}</text>')
 
+        # Author below node
         author = all_files[fidx].get("author", "")
         if len(author) > 10:
             author = author[:9] + "…"
         if author:
-            parts.append(f'<text x="{px}" y="{py + node_radius + 10}" fill="#475569" font-size="6" font-family="JetBrains Mono, monospace" text-anchor="middle">{author}</text>')
+            parts.append(f'<text x="{px}" y="{py + node_radius + 10}" fill="#475569" font-size="5" font-family="JetBrains Mono, monospace" text-anchor="middle">{author}</text>')
 
-    leg_x = svg_w - 120
-    parts.append(f'<circle cx="{leg_x}" cy="8" r="4" fill="#06b6d4"/>')
-    parts.append(f'<text x="{leg_x + 8}" y="11" fill="#94a3b8" font-size="7" font-family="JetBrains Mono, monospace">HEAD</text>')
-    parts.append(f'<circle cx="{leg_x + 50}" cy="8" r="4" fill="#6366f1"/>')
-    parts.append(f'<text x="{leg_x + 58}" y="11" fill="#94a3b8" font-size="7" font-family="JetBrains Mono, monospace">Compare</text>')
+    # Legend at bottom
+    parts.append(f'<circle cx="{left_pad}" cy="{legend_y}" r="3" fill="#06b6d4"/>')
+    parts.append(f'<text x="{left_pad + 6}" y="{legend_y + 3}" fill="#64748b" font-size="6" font-family="JetBrains Mono, monospace">HEAD</text>')
+    parts.append(f'<circle cx="{left_pad + 46}" cy="{legend_y}" r="3" fill="#6366f1"/>')
+    parts.append(f'<text x="{left_pad + 52}" y="{legend_y + 3}" fill="#64748b" font-size="6" font-family="JetBrains Mono, monospace">Compare</text>')
+
     parts.append("</svg>")
     return "\n".join(parts)
 
