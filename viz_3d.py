@@ -24,12 +24,20 @@ STATUS_LABELS = {
 def build_3d_figure(diff: dict, nodes_old: dict, nodes_new: dict) -> go.Figure:
     """
     Build a 3D Plotly figure showing the structural diff.
-    Uses nodes from both versions to position elements.
+    Legend shows only 4 entries: Agregado, Eliminado, Modificado, Sin cambios.
     """
     fig = go.Figure()
 
-    # Merge all nodes for coordinate lookup
     all_nodes = {**nodes_old, **nodes_new}
+
+    # Track which status groups already have a legend entry
+    legend_shown = set()
+
+    def should_show_legend(status):
+        if status not in legend_shown:
+            legend_shown.add(status)
+            return True
+        return False
 
     # ── Bars ────────────────────────────────────────────────────────────
     bars_diff = diff["bars"]
@@ -52,11 +60,13 @@ def build_3d_figure(diff: dict, nodes_old: dict, nodes_new: dict) -> go.Figure:
                 label = bar.get("label", uid)
                 texts += [label, label, None]
 
+        show = should_show_legend(status)
         fig.add_trace(go.Scatter3d(
             x=xs, y=ys, z=zs, mode="lines",
             line=dict(color=color, width=4 if status != "unchanged" else 2),
-            name=f"Barras {STATUS_LABELS[status]} ({len(items)})",
-            legendgroup=f"b_{status}",
+            name=STATUS_LABELS[status],
+            legendgroup=status,
+            showlegend=show,
             hovertext=texts,
             hoverinfo="text",
             opacity=0.3 if status == "unchanged" else 1.0,
@@ -79,13 +89,14 @@ def build_3d_figure(diff: dict, nodes_old: dict, nodes_new: dict) -> go.Figure:
                 zs = [c["Z"] for c in coords]
                 label = surf.get("label", uid)
 
+                show = should_show_legend(status)
                 fig.add_trace(go.Mesh3d(
                     x=xs, y=ys, z=zs,
                     color=color,
                     opacity=0.15 if status == "unchanged" else 0.4,
-                    name=f"{label} ({STATUS_LABELS[status]})",
-                    legendgroup=f"s_{status}",
-                    showlegend=True,
+                    name=STATUS_LABELS[status],
+                    legendgroup=status,
+                    showlegend=show,
                     hovertext=label,
                     hoverinfo="text",
                 ))
@@ -98,6 +109,8 @@ def build_3d_figure(diff: dict, nodes_old: dict, nodes_new: dict) -> go.Figure:
             continue
         color = STATUS_COLORS[status]
         nodes_list = list(items.values())
+
+        show = should_show_legend(status)
         fig.add_trace(go.Scatter3d(
             x=[n["X"] for n in nodes_list],
             y=[n["Y"] for n in nodes_list],
@@ -108,8 +121,9 @@ def build_3d_figure(diff: dict, nodes_old: dict, nodes_new: dict) -> go.Figure:
                 color=color,
                 opacity=0.3 if status == "unchanged" else 1.0,
             ),
-            name=f"Nodos {STATUS_LABELS[status]} ({len(items)})",
-            legendgroup=f"n_{status}",
+            name=STATUS_LABELS[status],
+            legendgroup=status,
+            showlegend=show,
             text=[f"{n.get('label', n['uid'])}<br>({n['X']}, {n['Y']}, {n['Z']})" for n in nodes_list],
             hovertemplate="%{text}<extra></extra>",
         ))
@@ -125,11 +139,11 @@ def build_3d_figure(diff: dict, nodes_old: dict, nodes_new: dict) -> go.Figure:
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         legend=dict(
-            orientation="v", yanchor="top", y=0.85, xanchor="left", x=1.02,
-            font=dict(size=11, color="#94a3b8", family="monospace"),
+            orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5,
+            font=dict(size=12, color="#94a3b8", family="monospace"),
             bgcolor="rgba(0,0,0,0)",
         ),
-        margin=dict(l=0, r=0, t=30, b=0),
+        margin=dict(l=0, r=0, t=40, b=0),
         height=550,
     )
     return fig
