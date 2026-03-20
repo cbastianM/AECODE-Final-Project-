@@ -548,20 +548,20 @@ def render_github_branch_graph(all_files, branch_names, head_idx, compare_idx):
         return ""
 
     branch_lane = {name: i for i, name in enumerate(branch_names)}
-    node_radius = 12
-    h_spacing = 70
-    v_spacing = 40
-    left_pad = 120
-    top_pad = 36
+    node_radius = 8
+    h_spacing = 50
+    v_spacing = 32
+    left_pad = 80
+    top_pad = 10
 
     total_lanes = max(len(branch_names), 1)
-    svg_w = left_pad + len(all_files) * h_spacing + 60
-    svg_h = top_pad + total_lanes * v_spacing + 28
+    svg_w = left_pad + len(all_files) * h_spacing + 40
+    svg_h = top_pad + total_lanes * v_spacing + 24
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 {svg_w} {svg_h}" '
-        f'style="background: #0a0e17; border-radius: 10px; border: 1px solid #1e2d42;">',
-        '<defs><filter id="glow2"><feGaussianBlur stdDeviation="3" result="g"/>'
+        f'style="background: #0a0e17; border-radius: 8px; border: 1px solid #1e2d42;">',
+        '<defs><filter id="glow2"><feGaussianBlur stdDeviation="2" result="g"/>'
         '<feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>',
     ]
 
@@ -569,7 +569,7 @@ def render_github_branch_graph(all_files, branch_names, head_idx, compare_idx):
         lane = branch_lane[bname]
         by = top_pad + lane * v_spacing
         color = BRANCH_COLORS[lane % len(BRANCH_COLORS)]
-        parts.append(f'<text x="10" y="{by + 4}" fill="{color}" font-size="9" font-family="JetBrains Mono, monospace" font-weight="600">{bname}</text>')
+        parts.append(f'<text x="6" y="{by + 3}" fill="{color}" font-size="8" font-family="JetBrains Mono, monospace" font-weight="600">{bname}</text>')
         parts.append(f'<line x1="{left_pad - 20}" y1="{by}" x2="{svg_w - 20}" y2="{by}" stroke="{color}" stroke-opacity="0.15" stroke-width="1" stroke-dasharray="4,4"/>')
 
     positions = {}
@@ -605,26 +605,26 @@ def render_github_branch_graph(all_files, branch_names, head_idx, compare_idx):
         is_compare = fidx == compare_idx
 
         if is_head:
-            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 6}" fill="none" stroke="#06b6d4" stroke-width="2" filter="url(#glow2)" stroke-opacity="0.7"/>')
-            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#06b6d4" stroke="#0a0e17" stroke-width="2"/>')
-            parts.append(f'<text x="{px}" y="{py + 4}" fill="#fff" font-size="9" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">H</text>')
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 4}" fill="none" stroke="#06b6d4" stroke-width="1.5" filter="url(#glow2)" stroke-opacity="0.7"/>')
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#06b6d4" stroke="#0a0e17" stroke-width="1.5"/>')
+            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="7" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">H</text>')
         elif is_compare:
-            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 6}" fill="none" stroke="#6366f1" stroke-width="2" filter="url(#glow2)" stroke-opacity="0.7"/>')
-            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#6366f1" stroke="#0a0e17" stroke-width="2"/>')
-            parts.append(f'<text x="{px}" y="{py + 4}" fill="#fff" font-size="9" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">C</text>')
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 4}" fill="none" stroke="#6366f1" stroke-width="1.5" filter="url(#glow2)" stroke-opacity="0.7"/>')
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#6366f1" stroke="#0a0e17" stroke-width="1.5"/>')
+            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="7" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">C</text>')
         else:
             parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#1e2d42" stroke="{color}" stroke-width="2"/>')
 
         fname = all_files[fidx]["name"].replace(".json", "")
-        if len(fname) > 12:
-            fname = fname[:11] + "…"
-        parts.append(f'<text x="{px}" y="{py + node_radius + 14}" fill="#475569" font-size="7" font-family="JetBrains Mono, monospace" text-anchor="middle">{fname}</text>')
+        if len(fname) > 10:
+            fname = fname[:9] + "…"
+        parts.append(f'<text x="{px}" y="{py + node_radius + 10}" fill="#475569" font-size="6" font-family="JetBrains Mono, monospace" text-anchor="middle">{fname}</text>')
 
-    leg_x = svg_w - 200
-    parts.append(f'<circle cx="{leg_x}" cy="14" r="6" fill="#06b6d4"/>')
-    parts.append(f'<text x="{leg_x + 12}" y="18" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">HEAD</text>')
-    parts.append(f'<circle cx="{leg_x + 80}" cy="14" r="6" fill="#6366f1"/>')
-    parts.append(f'<text x="{leg_x + 92}" y="18" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">Compare</text>')
+    leg_x = svg_w - 120
+    parts.append(f'<circle cx="{leg_x}" cy="8" r="4" fill="#06b6d4"/>')
+    parts.append(f'<text x="{leg_x + 8}" y="11" fill="#94a3b8" font-size="7" font-family="JetBrains Mono, monospace">HEAD</text>')
+    parts.append(f'<circle cx="{leg_x + 50}" cy="8" r="4" fill="#6366f1"/>')
+    parts.append(f'<text x="{leg_x + 58}" y="11" fill="#94a3b8" font-size="7" font-family="JetBrains Mono, monospace">Compare</text>')
     parts.append("</svg>")
     return "\n".join(parts)
 
@@ -823,9 +823,10 @@ elif mode == "🐙 GitHub":
         else:
             file_labels = [f["label"] for f in all_files]
 
-            # ── File selectors ──────────────────────────────────────────
-            col1, col2 = st.columns(2)
-            with col1:
+            # ── Selectors + Branch graph side by side ───────────────────
+            col_sel, col_graph = st.columns([1, 2])
+
+            with col_sel:
                 head_idx = st.selectbox(
                     "🔵 HEAD (versión actual)",
                     range(len(all_files)),
@@ -833,7 +834,6 @@ elif mode == "🐙 GitHub":
                     format_func=lambda i: file_labels[i],
                     key="gh_head",
                 )
-            with col2:
                 compare_idx = st.selectbox(
                     "🟣 Comparar con",
                     range(len(all_files)),
@@ -842,10 +842,10 @@ elif mode == "🐙 GitHub":
                     key="gh_compare",
                 )
 
-            # ── Branch graph ────────────────────────────────────────────
-            svg_html = render_github_branch_graph(all_files, branch_names, head_idx, compare_idx)
-            if svg_html:
-                st.markdown(svg_html, unsafe_allow_html=True)
+            with col_graph:
+                svg_html = render_github_branch_graph(all_files, branch_names, head_idx, compare_idx)
+                if svg_html:
+                    st.markdown(svg_html, unsafe_allow_html=True)
 
             # ── Diff ────────────────────────────────────────────────────
             head_file = all_files[head_idx]
