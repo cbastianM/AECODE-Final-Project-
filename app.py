@@ -293,17 +293,6 @@ def generate_local_summary(diff, summary, head_name, compare_name):
 def render_diff_view(diff, summary, model_head, model_compare, head_name, compare_name, api_key):
     """Render the complete diff visualization with collapsible sections."""
 
-    # ── Summary metrics ─────────────────────────────────────────────────
-    cols = st.columns(6)
-    labels = ["Nodos", "Barras", "Superficies", "Materiales", "Secciones", "Total"]
-    keys = ["nodes", "bars", "surfaces", "materials", "sections"]
-    for i, (label, key) in enumerate(zip(labels[:5], keys)):
-        s = summary[key]
-        val = s["total_changes"]
-        detail = f"+{s['added']} / -{s['removed']} / ~{s['modified']}"
-        cols[i].metric(label, val, detail)
-    cols[5].metric("Total", summary["total"])
-
     # ── 3D View + AI/Summary side by side ───────────────────────────────
     col_3d, col_ai = st.columns([3, 2])
 
@@ -550,6 +539,99 @@ def load_and_parse(file_or_data, name: str) -> tuple:
 # ═════════════════════════════════════════════════════════════════════════════
 #  MODE: LOCAL UPLOAD
 # ═════════════════════════════════════════════════════════════════════════════
+#  GITHUB BRANCH GRAPH SVG
+# ═════════════════════════════════════════════════════════════════════════════
+
+def render_github_branch_graph(all_files, branch_names, head_idx, compare_idx):
+    """Render SVG branch graph for GitHub mode showing branches and their files."""
+    if not all_files:
+        return ""
+
+    branch_lane = {name: i for i, name in enumerate(branch_names)}
+    node_radius = 12
+    h_spacing = 70
+    v_spacing = 40
+    left_pad = 120
+    top_pad = 36
+
+    total_lanes = max(len(branch_names), 1)
+    svg_w = left_pad + len(all_files) * h_spacing + 60
+    svg_h = top_pad + total_lanes * v_spacing + 28
+
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 {svg_w} {svg_h}" '
+        f'style="background: #0a0e17; border-radius: 10px; border: 1px solid #1e2d42;">',
+        '<defs><filter id="glow2"><feGaussianBlur stdDeviation="3" result="g"/>'
+        '<feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>',
+    ]
+
+    for bname in branch_names:
+        lane = branch_lane[bname]
+        by = top_pad + lane * v_spacing
+        color = BRANCH_COLORS[lane % len(BRANCH_COLORS)]
+        parts.append(f'<text x="10" y="{by + 4}" fill="{color}" font-size="9" font-family="JetBrains Mono, monospace" font-weight="600">{bname}</text>')
+        parts.append(f'<line x1="{left_pad - 20}" y1="{by}" x2="{svg_w - 20}" y2="{by}" stroke="{color}" stroke-opacity="0.15" stroke-width="1" stroke-dasharray="4,4"/>')
+
+    positions = {}
+    for fidx, f in enumerate(all_files):
+        lane = branch_lane.get(f["branch"], 0)
+        positions[fidx] = (left_pad + fidx * h_spacing, top_pad + lane * v_spacing, f["branch"])
+
+    prev_by_branch = {}
+    for fidx in range(len(all_files)):
+        px, py, bname = positions[fidx]
+        color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
+        if bname in prev_by_branch:
+            ppx, ppy = prev_by_branch[bname]
+            parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="2" stroke-opacity="0.5"/>')
+        prev_by_branch[bname] = (px, py)
+
+    seen = set()
+    for fidx in range(len(all_files)):
+        px, py, bname = positions[fidx]
+        if bname != branch_names[0] and bname not in seen:
+            seen.add(bname)
+            for pi in range(fidx - 1, -1, -1):
+                ppx, ppy, pb = positions[pi]
+                if pb == branch_names[0]:
+                    color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
+                    parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1.5" stroke-opacity="0.3" stroke-dasharray="6,3"/>')
+                    break
+
+    for fidx in range(len(all_files)):
+        px, py, bname = positions[fidx]
+        color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
+        is_head = fidx == head_idx
+        is_compare = fidx == compare_idx
+
+        if is_head:
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 6}" fill="none" stroke="#06b6d4" stroke-width="2" filter="url(#glow2)" stroke-opacity="0.7"/>')
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#06b6d4" stroke="#0a0e17" stroke-width="2"/>')
+            parts.append(f'<text x="{px}" y="{py + 4}" fill="#fff" font-size="9" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">H</text>')
+        elif is_compare:
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 6}" fill="none" stroke="#6366f1" stroke-width="2" filter="url(#glow2)" stroke-opacity="0.7"/>')
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#6366f1" stroke="#0a0e17" stroke-width="2"/>')
+            parts.append(f'<text x="{px}" y="{py + 4}" fill="#fff" font-size="9" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">C</text>')
+        else:
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#1e2d42" stroke="{color}" stroke-width="2"/>')
+
+        fname = all_files[fidx]["name"].replace(".json", "")
+        if len(fname) > 12:
+            fname = fname[:11] + "…"
+        parts.append(f'<text x="{px}" y="{py + node_radius + 14}" fill="#475569" font-size="7" font-family="JetBrains Mono, monospace" text-anchor="middle">{fname}</text>')
+
+    leg_x = svg_w - 200
+    parts.append(f'<circle cx="{leg_x}" cy="14" r="6" fill="#06b6d4"/>')
+    parts.append(f'<text x="{leg_x + 12}" y="18" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">HEAD</text>')
+    parts.append(f'<circle cx="{leg_x + 80}" cy="14" r="6" fill="#6366f1"/>')
+    parts.append(f'<text x="{leg_x + 92}" y="18" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">Compare</text>')
+    parts.append("</svg>")
+    return "\n".join(parts)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  MODE: GITHUB
+# ═════════════════════════════════════════════════════════════════════════════
 
 if mode == "📁 Local (upload)":
 
@@ -699,9 +781,6 @@ if mode == "📁 Local (upload)":
             st.info("Sube al menos 2 archivos para comparar versiones.")
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  MODE: GITHUB
-# ═════════════════════════════════════════════════════════════════════════════
 
 elif mode == "🐙 GitHub":
 
@@ -720,32 +799,21 @@ elif mode == "🐙 GitHub":
         """, unsafe_allow_html=True)
     else:
         vcs = st.session_state.vcs
-
-        # ── Load all branches and their models ──────────────────────────
         branches = vcs.list_branches()
         branch_names = [b["name"] for b in branches]
 
-        # Build a flat list of all (branch, filename) pairs
-        all_files = []  # list of {"branch": str, "name": str, "size_kb": float, "label": str}
+        all_files = []
         for bname in branch_names:
             models = vcs.list_models(bname)
             for m in models:
-                label = f"{bname}/{m['name']}"
-                all_files.append({
-                    "branch": bname,
-                    "name": m["name"],
-                    "size_kb": m["size_kb"],
-                    "label": label,
-                })
+                all_files.append({"branch": bname, "name": m["name"], "size_kb": m["size_kb"], "label": f"{bname}/{m['name']}"})
 
-        # ── Models in repo (collapsible) ────────────────────────────────
-        total_files = len(all_files)
-        with st.expander(f"📄 Modelos en repositorio ({total_files} archivos en {len(branch_names)} ramas)", expanded=False):
+        with st.expander(f"📄 Modelos en repositorio ({len(all_files)} archivos en {len(branch_names)} ramas)", expanded=False):
             for bname in branch_names:
-                branch_files = [f for f in all_files if f["branch"] == bname]
-                if branch_files:
-                    st.markdown(f"**`{bname}`** — {len(branch_files)} modelo(s)")
-                    for f in branch_files:
+                bf = [f for f in all_files if f["branch"] == bname]
+                if bf:
+                    st.markdown(f"**`{bname}`** — {len(bf)} modelo(s)")
+                    for f in bf:
                         st.caption(f"   📄 {f['name']} ({f['size_kb']} KB)")
                 else:
                     st.markdown(f"**`{bname}`** — sin modelos")
@@ -753,10 +821,9 @@ elif mode == "🐙 GitHub":
         if not all_files:
             st.info("No hay modelos JSON en el repositorio. Asegúrate de que los archivos estén en la carpeta `models/`.")
         else:
-            # ── Independent file selectors ───────────────────────────────
             file_labels = [f["label"] for f in all_files]
 
-            st.markdown("---")
+            # ── File selectors ──────────────────────────────────────────
             col1, col2 = st.columns(2)
             with col1:
                 head_idx = st.selectbox(
@@ -764,6 +831,7 @@ elif mode == "🐙 GitHub":
                     range(len(all_files)),
                     index=min(len(all_files) - 1, 1) if len(all_files) > 1 else 0,
                     format_func=lambda i: file_labels[i],
+                    key="gh_head",
                 )
             with col2:
                 compare_idx = st.selectbox(
@@ -771,32 +839,37 @@ elif mode == "🐙 GitHub":
                     range(len(all_files)),
                     index=0,
                     format_func=lambda i: file_labels[i],
+                    key="gh_compare",
                 )
 
+            # ── Branch graph ────────────────────────────────────────────
+            svg_html = render_github_branch_graph(all_files, branch_names, head_idx, compare_idx)
+            if svg_html:
+                st.markdown(svg_html, unsafe_allow_html=True)
+
+            # ── Diff ────────────────────────────────────────────────────
             head_file = all_files[head_idx]
             compare_file = all_files[compare_idx]
 
             if head_file["label"] == compare_file["label"]:
                 st.warning("Selecciona dos archivos diferentes para comparar.")
             else:
-                # ── Load and compare ────────────────────────────────────
-                head_cache_key = head_file["label"]
-                compare_cache_key = compare_file["label"]
+                hck, cck = head_file["label"], compare_file["label"]
 
-                if head_cache_key not in st.session_state.models_cache:
-                    with st.spinner(f"Descargando {head_file['label']}..."):
+                if hck not in st.session_state.models_cache:
+                    with st.spinner(f"Descargando {hck}..."):
                         data = vcs.get_model(head_file["name"], head_file["branch"])
                         if data:
-                            st.session_state.models_cache[head_cache_key] = data
+                            st.session_state.models_cache[hck] = data
 
-                if compare_cache_key not in st.session_state.models_cache:
-                    with st.spinner(f"Descargando {compare_file['label']}..."):
+                if cck not in st.session_state.models_cache:
+                    with st.spinner(f"Descargando {cck}..."):
                         data = vcs.get_model(compare_file["name"], compare_file["branch"])
                         if data:
-                            st.session_state.models_cache[compare_cache_key] = data
+                            st.session_state.models_cache[cck] = data
 
-                head_raw = st.session_state.models_cache.get(head_cache_key)
-                compare_raw = st.session_state.models_cache.get(compare_cache_key)
+                head_raw = st.session_state.models_cache.get(hck)
+                compare_raw = st.session_state.models_cache.get(cck)
 
                 if head_raw and compare_raw:
                     head_parsed = parse_model(head_raw)
@@ -804,44 +877,26 @@ elif mode == "🐙 GitHub":
 
                     diff = compute_full_diff(compare_parsed, head_parsed)
                     summary = build_summary(diff)
-                    report_text = diff_to_report_text(diff, head_file["label"], compare_file["label"])
+                    report_text = diff_to_report_text(diff, hck, cck)
 
                     st.session_state.current_diff = diff
                     st.session_state.current_report_text = report_text
 
                     st.markdown("---")
+                    render_diff_view(diff, summary, head_parsed, compare_parsed, hck, cck, api_key)
 
-                    render_diff_view(
-                        diff, summary,
-                        head_parsed, compare_parsed,
-                        head_file["label"], compare_file["label"],
-                        api_key,
-                    )
-
-                    # Changelog in sidebar
-                    changelog = build_changelog_json(diff, head_file["label"], compare_file["label"])
+                    changelog = build_changelog_json(diff, hck, cck)
                     with st.sidebar:
                         st.markdown("---")
                         st.markdown("#### 📥 Changelog")
-                        st.download_button(
-                            "Descargar changelog JSON",
-                            json.dumps(changelog, indent=2, ensure_ascii=False),
-                            "changelog.json", "application/json",
-                            use_container_width=True,
-                        )
+                        st.download_button("Descargar changelog JSON", json.dumps(changelog, indent=2, ensure_ascii=False), "changelog.json", "application/json", use_container_width=True)
                         st.caption(f"{summary['total']} cambios totales")
-
                 else:
                     st.error("Error al descargar los modelos del repositorio.")
 
-        # ── Commit history (collapsible) ────────────────────────────────
         if branch_names:
             with st.expander("📜 Historial de commits", expanded=False):
                 hist_branch = st.selectbox("Rama", branch_names, key="hist_branch")
                 commits = vcs.get_commit_history(hist_branch, max_commits=20)
                 for c in commits:
-                    st.markdown(
-                        f"**`{c['sha']}`** — {c['message']}  \n"
-                        f"<small>{c['author']} · {c['date'][:10]}</small>",
-                        unsafe_allow_html=True,
-                    )
+                    st.markdown(f"**`{c['sha']}`** — {c['message']}  \n<small>{c['author']} · {c['date'][:10]}</small>", unsafe_allow_html=True)
