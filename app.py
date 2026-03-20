@@ -488,14 +488,16 @@ Instrucciones:
 #  GITHUB HELPER — branch-native files only
 # ═════════════════════════════════════════════════════════════════════════════
 
-def get_branch_native_files(vcs, branch_names: list) -> list:
+def get_branch_native_files(vcs, branch_names: list, default_branch: str = "main") -> list:
     """
     Returns only files that are new or modified per branch.
-    A file is 'native' to a branch if its blob SHA differs from the
-    default branch (first branch), or if it doesn't exist there at all.
-    Files with the same SHA as the default branch are inherited and hidden.
+    Uses the repo's actual default branch (e.g. 'main') as base —
+    NOT branch_names[0] which depends on API sort order.
+    Files with the same blob SHA as the default branch are inherited and hidden.
     """
-    default_branch = branch_names[0]
+    # Fallback: if default_branch not in list, use first
+    if default_branch not in branch_names:
+        default_branch = branch_names[0]
 
     branch_file_shas = {}
     branch_file_meta = {}
@@ -508,7 +510,10 @@ def get_branch_native_files(vcs, branch_names: list) -> list:
     default_shas = branch_file_shas.get(default_branch, {})
     all_files    = []
 
-    for bname in branch_names:
+    # Put default branch first so the graph renders it on top lane
+    ordered_branches = [default_branch] + [b for b in branch_names if b != default_branch]
+
+    for bname in ordered_branches:
         for fname, sha in branch_file_shas[bname].items():
             if bname == default_branch:
                 native = True
@@ -770,10 +775,17 @@ elif mode == "🐙 GitHub":
     else:
         vcs          = st.session_state.vcs
         branches     = vcs.list_branches()
-        branch_names = [b["name"] for b in branches]
+        repo_info    = vcs.get_repo_info()
+        default_branch = repo_info.get("default_branch", "main")
+
+        # Ordenar: rama default primero, luego el resto alfabéticamente
+        branch_names = sorted(
+            [b["name"] for b in branches],
+            key=lambda n: (0 if n == default_branch else 1, n)
+        )
 
         # Solo archivos nativos por rama (sin duplicados heredados)
-        all_files = get_branch_native_files(vcs, branch_names)
+        all_files = get_branch_native_files(vcs, branch_names, default_branch)
 
         with st.expander(
             f"📄 Modelos en repositorio ({len(all_files)} archivos propios en {len(branch_names)} ramas)",
