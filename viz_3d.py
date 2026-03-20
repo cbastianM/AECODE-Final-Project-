@@ -125,11 +125,11 @@ def build_3d_figure(diff: dict, nodes_old: dict, nodes_new: dict) -> go.Figure:
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         legend=dict(
-            orientation="v", yanchor="top", y=0.95, xanchor="left", x=1.02,
+            orientation="v", yanchor="top", y=0.75, xanchor="left", x=1.02,
             font=dict(size=11, color="#94a3b8", family="monospace"),
             bgcolor="rgba(0,0,0,0)",
         ),
-        margin=dict(l=0, r=0, t=0, b=0),
+        margin=dict(l=0, r=0, t=30, b=0),
         height=550,
     )
     return fig
