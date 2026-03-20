@@ -95,17 +95,17 @@ def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
     branch_names = list(branches.keys())
     branch_lane = {name: i for i, name in enumerate(branch_names)}
 
-    node_radius = 16
-    h_spacing = 90
-    v_spacing = 50
-    left_pad = 140
-    top_pad = 50
+    node_radius = 12
+    h_spacing = 70
+    v_spacing = 40
+    left_pad = 120
+    top_pad = 36
 
     max_versions = len(versions)
     total_lanes = max(len(branch_names), 1)
 
     svg_w = left_pad + max_versions * h_spacing + 60
-    svg_h = top_pad + total_lanes * v_spacing + 40
+    svg_h = top_pad + total_lanes * v_spacing + 28
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 {svg_w} {svg_h}" '
@@ -121,7 +121,7 @@ def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
         by = top_pad + lane * v_spacing
         color = BRANCH_COLORS[lane % len(BRANCH_COLORS)]
         parts.append(
-            f'<text x="10" y="{by + 4}" fill="{color}" font-size="11" '
+            f'<text x="10" y="{by + 4}" fill="{color}" font-size="9" '
             f'font-family="JetBrains Mono, monospace" font-weight="600">{bname}</text>'
         )
         parts.append(
@@ -239,7 +239,7 @@ def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
 #  RENDER DIFF VIEW
 # ═════════════════════════════════════════════════════════════════════════════
 
-def render_diff_view(diff, summary, model_head, model_compare, head_name, compare_name):
+def render_diff_view(diff, summary, model_head, model_compare, head_name, compare_name, api_key):
     """Render the complete diff visualization with collapsible sections."""
 
     # ── Summary metrics ─────────────────────────────────────────────────
@@ -253,12 +253,80 @@ def render_diff_view(diff, summary, model_head, model_compare, head_name, compar
         cols[i].metric(label, val, detail)
     cols[5].metric("Total", summary["total"])
 
-    # ── 3D View (collapsible) ───────────────────────────────────────────
-    with st.expander("🧊 Vista 3D del modelo", expanded=True):
+    # ── 3D View + AI Chat side by side ──────────────────────────────────
+    col_3d, col_ai = st.columns([3, 2])
+
+    with col_3d:
+        st.markdown("#### 🧊 Vista 3D")
         fig = build_3d_figure(diff, model_compare["nodes"], model_head["nodes"])
         st.plotly_chart(fig, use_container_width=True, key="diff_3d")
 
-    # ── Detailed changes (one expander per category) ────────────────────
+    with col_ai:
+        st.markdown("#### 🤖 Asistente IA")
+        if not api_key:
+            st.info("Configura tu Anthropic API Key en la barra lateral.")
+        else:
+            for msg in st.session_state.ai_messages:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+
+            if prompt := st.chat_input("Pregunta sobre los cambios..."):
+                st.session_state.ai_messages.append({"role": "user", "content": prompt})
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+
+                changelog = build_changelog_json(diff, head_name, compare_name)
+                system_prompt = f"""Eres un asistente experto en ingeniería estructural. El usuario tiene un gestor de versiones de modelos estructurales y quiere entender los cambios entre versiones.
+
+Aquí está el changelog completo (solo elementos que cambiaron):
+
+{json.dumps(changelog, indent=2, ensure_ascii=False)}
+
+Instrucciones:
+- Responde en español, de forma concisa y técnica.
+- Usa los labels de elementos (N_001, B_001, S_001) cuando los menciones.
+- Para materiales y secciones, usa sus nombres legibles.
+- Si te preguntan "¿qué cambió?", da un resumen claro y organizado.
+"""
+
+                with st.chat_message("assistant"):
+                    with st.spinner("Analizando..."):
+                        try:
+                            messages = [
+                                {"role": m["role"], "content": m["content"]}
+                                for m in st.session_state.ai_messages
+                            ]
+                            payload = json.dumps({
+                                "model": "claude-sonnet-4-20250514",
+                                "max_tokens": 2000,
+                                "system": system_prompt,
+                                "messages": messages,
+                            })
+
+                            req = urllib.request.Request(
+                                "https://api.anthropic.com/v1/messages",
+                                data=payload.encode("utf-8"),
+                                headers={
+                                    "Content-Type": "application/json",
+                                    "x-api-key": api_key,
+                                    "anthropic-version": "2023-06-01",
+                                },
+                                method="POST",
+                            )
+
+                            with urllib.request.urlopen(req, timeout=30) as resp:
+                                result = json.loads(resp.read().decode())
+                                ai_text = result["content"][0]["text"]
+
+                            st.markdown(ai_text)
+                            st.session_state.ai_messages.append({"role": "assistant", "content": ai_text})
+
+                        except Exception as e:
+                            error_msg = f"Error al consultar la IA: {str(e)}"
+                            st.error(error_msg)
+                            st.session_state.ai_messages.append({"role": "assistant", "content": error_msg})
+
+    # ── Detailed changes (all closed by default) ────────────────────────
     for tab_name, key in zip(labels[:5], keys):
         data = diff[key]
         added_n = len(data.get("added", {}))
@@ -278,7 +346,7 @@ def render_diff_view(diff, summary, model_head, model_compare, head_name, compar
 
         with st.expander(
             f"📐 {tab_name}  —  {badge}  ({unchanged_n} sin cambios)",
-            expanded=(total_changes > 0),
+            expanded=False,
         ):
             if total_changes == 0:
                 st.caption("No hay cambios en esta categoría.")
@@ -307,87 +375,6 @@ def render_diff_view(diff, summary, model_head, model_compare, head_name, compar
                             name = item.get("name", "")
                             extra = f" — {name}" if name and name != label else ""
                             st.caption(f"   {label}{extra}")
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  RENDER AI CHAT
-# ═════════════════════════════════════════════════════════════════════════════
-
-def render_ai_chat(diff, report_text, head_name, compare_name, api_key):
-    """Render the AI chat interface inside an expander."""
-    with st.expander("🤖 Asistente IA", expanded=False):
-        if not api_key:
-            st.info("Configura tu Anthropic API Key en la barra lateral para usar el asistente.")
-            return
-
-        if not diff:
-            st.info("Primero compara dos versiones para activar el asistente.")
-            return
-
-        for msg in st.session_state.ai_messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-
-        if prompt := st.chat_input("Pregunta sobre los cambios..."):
-            st.session_state.ai_messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            changelog = build_changelog_json(diff, head_name, compare_name)
-            system_prompt = f"""Eres un asistente experto en ingeniería estructural. El usuario tiene un gestor de versiones de modelos estructurales y quiere entender los cambios entre versiones.
-
-Aquí está el changelog completo (solo elementos que cambiaron):
-
-{json.dumps(changelog, indent=2, ensure_ascii=False)}
-
-Y aquí el reporte de texto:
-
-{report_text}
-
-Instrucciones:
-- Responde en español, de forma concisa y técnica.
-- Usa los labels de elementos (N_001, B_001, S_001) cuando los menciones.
-- Para materiales y secciones, usa sus nombres legibles.
-- Si te preguntan "¿qué cambió?", da un resumen claro y organizado.
-- Si te preguntan sobre costos o normatividad, indica que necesitarías tablas de precios unitarios o documentos normativos cargados como contexto adicional.
-"""
-
-            with st.chat_message("assistant"):
-                with st.spinner("Analizando..."):
-                    try:
-                        messages = [
-                            {"role": m["role"], "content": m["content"]}
-                            for m in st.session_state.ai_messages
-                        ]
-                        payload = json.dumps({
-                            "model": "claude-sonnet-4-20250514",
-                            "max_tokens": 2000,
-                            "system": system_prompt,
-                            "messages": messages,
-                        })
-
-                        req = urllib.request.Request(
-                            "https://api.anthropic.com/v1/messages",
-                            data=payload.encode("utf-8"),
-                            headers={
-                                "Content-Type": "application/json",
-                                "x-api-key": api_key,
-                                "anthropic-version": "2023-06-01",
-                            },
-                            method="POST",
-                        )
-
-                        with urllib.request.urlopen(req, timeout=30) as resp:
-                            result = json.loads(resp.read().decode())
-                            ai_text = result["content"][0]["text"]
-
-                        st.markdown(ai_text)
-                        st.session_state.ai_messages.append({"role": "assistant", "content": ai_text})
-
-                    except Exception as e:
-                        error_msg = f"Error al consultar la IA: {str(e)}"
-                        st.error(error_msg)
-                        st.session_state.ai_messages.append({"role": "assistant", "content": error_msg})
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -505,6 +492,19 @@ if mode == "📁 Local (upload)":
         if len(versions) >= 2:
             version_names = [v["name"] for v in versions]
 
+            # ── Uploaded files summary ──────────────────────────────────
+            with st.expander(f"📄 Archivos cargados ({len(versions)})", expanded=False):
+                for v in versions:
+                    p = v["parsed"]
+                    n_nodes = len(p["nodes"])
+                    n_bars = len(p["bars"])
+                    n_surfs = len(p["surfaces"])
+                    branch = st.session_state.local_branch_assignments.get(v["name"], "main")
+                    st.caption(
+                        f"**{v['name']}** — {n_nodes} nodos · {n_bars} barras · "
+                        f"{n_surfs} superficies · rama: `{branch}`"
+                    )
+
             # ── Branch management ───────────────────────────────────────
             with st.expander("🌿 Ramas", expanded=True):
                 # Init assignments
@@ -590,6 +590,7 @@ if mode == "📁 Local (upload)":
                     diff, summary,
                     head["parsed"], compare["parsed"],
                     head["name"], compare["name"],
+                    api_key,
                 )
 
                 # Changelog in sidebar
@@ -606,10 +607,6 @@ if mode == "📁 Local (upload)":
                         use_container_width=True,
                     )
                     st.caption(f"{summary['total']} cambios totales")
-
-                # AI Chat
-                st.markdown("---")
-                render_ai_chat(diff, report_text, head["name"], compare["name"], api_key)
 
             else:
                 st.warning("Selecciona dos versiones diferentes para comparar.")
@@ -749,7 +746,7 @@ elif mode == "🐙 GitHub":
                         st.session_state.current_diff = diff
                         st.session_state.current_report_text = report_text
 
-                        render_diff_view(diff, summary, head_parsed, compare_parsed, h_name, c_name)
+                        render_diff_view(diff, summary, head_parsed, compare_parsed, h_name, c_name, api_key)
 
                         # Changelog in sidebar
                         changelog = build_changelog_json(diff, h_name, c_name)
@@ -763,9 +760,6 @@ elif mode == "🐙 GitHub":
                                 use_container_width=True,
                             )
                             st.caption(f"{summary['total']} cambios totales")
-
-                        st.markdown("---")
-                        render_ai_chat(diff, report_text, h_name, c_name, api_key)
 
                     else:
                         missing = []
