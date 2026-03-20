@@ -239,6 +239,57 @@ def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
 #  RENDER DIFF VIEW
 # ═════════════════════════════════════════════════════════════════════════════
 
+def generate_local_summary(diff, summary, head_name, compare_name):
+    """Generate a structured text summary of changes without AI."""
+    lines = [f"**Resumen de cambios: `{compare_name}` → `{head_name}`**\n"]
+
+    category_names = {
+        "nodes": "Nodos", "bars": "Barras", "surfaces": "Superficies",
+        "materials": "Materiales", "sections": "Secciones",
+    }
+
+    total = summary["total"]
+    if total == 0:
+        lines.append("No se detectaron cambios entre las dos versiones.")
+        return "\n".join(lines)
+
+    lines.append(f"Se detectaron **{total} cambios** en total:\n")
+
+    for key, cat_name in category_names.items():
+        s = summary[key]
+        if s["total_changes"] == 0:
+            continue
+
+        lines.append(f"**{cat_name}:**")
+        data = diff[key]
+
+        if data.get("added"):
+            items = list(data["added"].values())
+            labels = [item.get("label", item.get("name", "?")) for item in items]
+            lines.append(f"- Agregados ({len(items)}): {', '.join(labels[:10])}" +
+                        (" ..." if len(labels) > 10 else ""))
+
+        if data.get("removed"):
+            items = list(data["removed"].values())
+            labels = [item.get("label", item.get("name", "?")) for item in items]
+            lines.append(f"- Eliminados ({len(items)}): {', '.join(labels[:10])}" +
+                        (" ..." if len(labels) > 10 else ""))
+
+        if data.get("modified"):
+            items = list(data["modified"].values())
+            for item in items[:5]:
+                label = item.get("label", item.get("name", "?"))
+                changes = item.get("_changes", {})
+                change_list = [f"`{pk}`: {cv['old']} → {cv['new']}" for pk, cv in list(changes.items())[:3]]
+                lines.append(f"- Modificado {label}: {', '.join(change_list)}")
+            if len(items) > 5:
+                lines.append(f"- ... y {len(items) - 5} más")
+
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def render_diff_view(diff, summary, model_head, model_compare, head_name, compare_name, api_key):
     """Render the complete diff visualization with collapsible sections."""
 
@@ -253,7 +304,7 @@ def render_diff_view(diff, summary, model_head, model_compare, head_name, compar
         cols[i].metric(label, val, detail)
     cols[5].metric("Total", summary["total"])
 
-    # ── 3D View + AI Chat side by side ──────────────────────────────────
+    # ── 3D View + AI/Summary side by side ───────────────────────────────
     col_3d, col_ai = st.columns([3, 2])
 
     with col_3d:
@@ -262,10 +313,10 @@ def render_diff_view(diff, summary, model_head, model_compare, head_name, compar
         st.plotly_chart(fig, use_container_width=True, key="diff_3d")
 
     with col_ai:
-        st.markdown("#### 🤖 Asistente IA")
-        if not api_key:
-            st.info("Configura tu Anthropic API Key en la barra lateral.")
-        else:
+        if api_key:
+            # ── AI Chat mode ────────────────────────────────────────────
+            st.markdown("#### 🤖 Asistente IA")
+
             for msg in st.session_state.ai_messages:
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
@@ -325,6 +376,12 @@ Instrucciones:
                             error_msg = f"Error al consultar la IA: {str(e)}"
                             st.error(error_msg)
                             st.session_state.ai_messages.append({"role": "assistant", "content": error_msg})
+        else:
+            # ── Local summary mode (no API key) ─────────────────────────
+            st.markdown("#### 📝 ¿Qué cambió?")
+            local_summary = generate_local_summary(diff, summary, head_name, compare_name)
+            st.markdown(local_summary)
+            st.caption("💡 Conecta una API Key de Anthropic en la barra lateral para hacer preguntas interactivas.")
 
     # ── Detailed changes (all closed by default) ────────────────────────
     for tab_name, key in zip(labels[:5], keys):
@@ -407,25 +464,46 @@ with st.sidebar:
         st.markdown("---")
         st.markdown("#### 🔗 Conexión GitHub")
 
+        gh_user = st.text_input(
+            "Usuario GitHub",
+            placeholder="cbastianM",
+            help="Tu nombre de usuario en GitHub.",
+        )
         gh_token = st.text_input(
             "Personal Access Token",
             type="password",
             help="Token con permisos 'repo'. Genéralo en GitHub → Settings → Developer settings.",
         )
-        gh_repo = st.text_input(
-            "Repositorio",
-            placeholder="usuario/nombre-repo",
-            help="Formato: owner/repo-name",
+        gh_repo_input = st.text_input(
+            "Repositorio (nombre o link)",
+            placeholder="structural-models o https://github.com/user/repo",
+            help="Nombre del repo o URL completa.",
         )
 
+        # Parse repo input: accept full URL or just repo name
+        def parse_repo_input(user, repo_input):
+            repo_input = repo_input.strip().rstrip("/")
+            if "github.com/" in repo_input:
+                # Extract owner/repo from URL
+                parts = repo_input.split("github.com/")[-1].split("/")
+                if len(parts) >= 2:
+                    return f"{parts[0]}/{parts[1]}"
+            if "/" in repo_input:
+                return repo_input
+            if user:
+                return f"{user}/{repo_input}"
+            return repo_input
+
         if st.button("Conectar", use_container_width=True, type="primary"):
-            if gh_token and gh_repo:
+            if gh_token and gh_repo_input:
+                repo_full = parse_repo_input(gh_user, gh_repo_input)
                 try:
                     from github_vcs import GitHubVCS
-                    vcs = GitHubVCS(gh_token, gh_repo)
+                    vcs = GitHubVCS(gh_token, repo_full)
                     info = vcs.get_repo_info()
                     st.session_state.vcs = vcs
                     st.session_state.github_connected = True
+                    st.session_state.gh_repo_name = repo_full
                     st.success(f"Conectado a **{info['name']}**")
                 except Exception as e:
                     st.error(f"Error: {e}")
@@ -629,7 +707,7 @@ elif mode == "🐙 GitHub":
                 Conecta tu repositorio
             </h2>
             <p style="color: #64748b; max-width: 500px; margin: 0 auto;">
-                Configura tu token de GitHub y el nombre del repositorio en la barra lateral
+                Configura tu usuario, token y repositorio en la barra lateral
                 para comenzar a gestionar versiones de tus modelos estructurales.
             </p>
         </div>
@@ -637,11 +715,23 @@ elif mode == "🐙 GitHub":
     else:
         vcs = st.session_state.vcs
 
-        # ── Branch selector ─────────────────────────────────────────────
+        # ── Load branches and models ────────────────────────────────────
         branches = vcs.list_branches()
         branch_names = [b["name"] for b in branches]
 
-        col_b1, col_b2, col_b3 = st.columns([2, 2, 1])
+        # ── Models in repo (collapsible) ────────────────────────────────
+        with st.expander(f"📄 Modelos en repositorio ({len(branch_names)} ramas)", expanded=False):
+            for bname in branch_names:
+                models_in_branch = vcs.list_models(bname)
+                if models_in_branch:
+                    st.markdown(f"**`{bname}`** — {len(models_in_branch)} modelo(s)")
+                    for m in models_in_branch:
+                        st.caption(f"   📄 {m['name']} ({m['size_kb']} KB)")
+                else:
+                    st.markdown(f"**`{bname}`** — sin modelos")
+
+        # ── Branch selectors ────────────────────────────────────────────
+        col_b1, col_b2 = st.columns(2)
         with col_b1:
             head_branch = st.selectbox("🔵 Rama HEAD", branch_names, index=0)
         with col_b2:
@@ -649,73 +739,50 @@ elif mode == "🐙 GitHub":
                 "🟣 Comparar con", branch_names,
                 index=min(1, len(branch_names) - 1),
             )
-        with col_b3:
-            st.markdown("<br>", unsafe_allow_html=True)
-            new_branch = st.text_input("Nueva rama", placeholder="feature/...", key="gh_new_branch")
-            if st.button("Crear rama", use_container_width=True, key="gh_btn_create") and new_branch:
-                try:
-                    vcs.create_branch(new_branch, head_branch)
-                    st.success(f"Rama '{new_branch}' creada")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
 
-        st.markdown("---")
+        # ── Create branch (collapsible) ─────────────────────────────────
+        with st.expander("🌿 Crear nueva rama", expanded=False):
+            col_nb1, col_nb2 = st.columns([3, 1])
+            with col_nb1:
+                new_branch = st.text_input(
+                    "Nombre", placeholder="feature/losa-postensada", key="gh_new_branch",
+                    label_visibility="collapsed",
+                )
+            with col_nb2:
+                if st.button("Crear desde HEAD", use_container_width=True, key="gh_btn_create") and new_branch:
+                    try:
+                        vcs.create_branch(new_branch, head_branch)
+                        st.success(f"Rama '{new_branch}' creada desde '{head_branch}'")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
 
-        # ── Branch info (collapsible) ───────────────────────────────────
-        with st.expander("📂 Archivos en ramas", expanded=False):
-            col_info1, col_info2 = st.columns(2)
-            with col_info1:
-                st.markdown(f"**🔵 HEAD: `{head_branch}`**")
-                head_models = vcs.list_models(head_branch)
-                if head_models:
-                    for m in head_models:
-                        st.caption(f"  📄 {m['name']} ({m['size_kb']} KB)")
-                else:
-                    st.caption("  Sin modelos")
-            with col_info2:
-                st.markdown(f"**🟣 Compare: `{compare_branch}`**")
-                compare_models = vcs.list_models(compare_branch)
-                if compare_models:
-                    for m in compare_models:
-                        st.caption(f"  📄 {m['name']} ({m['size_kb']} KB)")
-                else:
-                    st.caption("  Sin modelos")
-
-        # ── Upload (collapsible) ────────────────────────────────────────
-        with st.expander("⬆️ Subir modelo a rama", expanded=False):
-            upload_file = st.file_uploader("Archivo JSON", type=["json"], key="gh_upload")
-            col_up1, col_up2 = st.columns(2)
-            with col_up1:
-                upload_branch = st.selectbox("Rama destino", branch_names, key="upload_branch")
-            with col_up2:
-                commit_msg = st.text_input("Mensaje de commit", placeholder="Actualización del modelo")
-
-            if upload_file and st.button("⬆️ Subir a GitHub", type="primary", use_container_width=True):
-                try:
-                    raw_data = json.loads(upload_file.read().decode("utf-8"))
-                    result = vcs.upload_model(
-                        upload_file.name, raw_data,
-                        branch=upload_branch,
-                        message=commit_msg or None,
-                    )
-                    st.success(f"Modelo subido: commit `{result['sha']}`")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al subir: {e}")
-
-        # ── Compare ─────────────────────────────────────────────────────
-        st.markdown("---")
-        st.markdown("### 🔍 Comparar modelos")
-
+        # ── Model selector and comparison ───────────────────────────────
+        head_models = vcs.list_models(head_branch)
+        compare_models = vcs.list_models(compare_branch)
         head_model_names = [m["name"] for m in head_models]
         compare_model_names = [m["name"] for m in compare_models]
         all_model_names = sorted(set(head_model_names + compare_model_names))
 
         if all_model_names:
-            selected_model = st.selectbox("Modelo a comparar", all_model_names)
+            st.markdown("---")
+            selected_model = st.selectbox("📐 Modelo a comparar", all_model_names)
 
-            if st.button("Comparar", type="primary", use_container_width=True):
+            # Check availability
+            in_head = selected_model in head_model_names
+            in_compare = selected_model in compare_model_names
+
+            if not in_head or not in_compare:
+                missing_in = []
+                if not in_head:
+                    missing_in.append(f"'{head_branch}'")
+                if not in_compare:
+                    missing_in.append(f"'{compare_branch}'")
+                st.warning(f"'{selected_model}' no existe en rama {' ni '.join(missing_in)}")
+            elif head_branch == compare_branch:
+                st.warning("Selecciona dos ramas diferentes para comparar.")
+            else:
+                # Auto-compare (no button needed)
                 with st.spinner("Descargando y analizando modelos..."):
                     head_cache_key = f"{head_branch}/{selected_model}"
                     compare_cache_key = f"{compare_branch}/{selected_model}"
@@ -746,6 +813,8 @@ elif mode == "🐙 GitHub":
                         st.session_state.current_diff = diff
                         st.session_state.current_report_text = report_text
 
+                        st.markdown("---")
+
                         render_diff_view(diff, summary, head_parsed, compare_parsed, h_name, c_name, api_key)
 
                         # Changelog in sidebar
@@ -762,14 +831,9 @@ elif mode == "🐙 GitHub":
                             st.caption(f"{summary['total']} cambios totales")
 
                     else:
-                        missing = []
-                        if not head_raw:
-                            missing.append(f"'{selected_model}' en '{head_branch}'")
-                        if not compare_raw:
-                            missing.append(f"'{selected_model}' en '{compare_branch}'")
-                        st.warning(f"No se encontró: {', '.join(missing)}")
+                        st.error("Error al descargar los modelos del repositorio.")
         else:
-            st.info("No hay modelos en las ramas seleccionadas.")
+            st.info("No hay modelos JSON en las ramas seleccionadas. Asegúrate de que los archivos estén en la carpeta `models/` del repositorio.")
 
         # ── Commit history (collapsible) ────────────────────────────────
         with st.expander("📜 Historial de commits", expanded=False):
