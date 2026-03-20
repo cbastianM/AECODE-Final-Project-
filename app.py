@@ -490,12 +490,15 @@ Instrucciones:
 
 def get_branch_native_files(vcs, branch_names: list, default_branch: str = "main") -> list:
     """
-    Returns only files that are genuinely new or modified in each branch.
-
-    A file is 'native' to branch B if its blob SHA does NOT appear in any
-    other branch for the same filename. This handles chains like:
-        main → jose → sebas
-    where sebas/V2 has the same SHA as jose/V2 and should not be shown twice.
+    - default_branch (main): ALWAYS shows all its files.
+    - Other branches: show only files whose SHA differs from main's SHA
+      for the same filename (i.e. the file was modified in that branch).
+      If a file doesn't exist in main at all, it's also shown.
+    This prevents files shared between sibling branches (jose/V2 == sebas/V2)
+    from appearing in both, by only comparing against main.
+    Sibling duplicates are broken by showing the file only in the branch
+    that has the highest sort order (last alphabetically) — so only one
+    branch "owns" each unique non-main SHA.
     """
     if default_branch not in branch_names:
         default_branch = branch_names[0]
@@ -508,24 +511,39 @@ def get_branch_native_files(vcs, branch_names: list, default_branch: str = "main
         branch_file_shas[bname] = {m["name"]: m["sha"] for m in models}
         branch_file_meta[bname] = {m["name"]: m for m in models}
 
-    all_files = []
+    main_shas = branch_file_shas.get(default_branch, {})
 
-    # Put default branch first so the graph renders it on the top lane
-    ordered_branches = [default_branch] + [b for b in branch_names if b != default_branch]
+    # For non-main branches: map (fname, sha) -> list of branches that have it
+    # so we can assign each unique SHA to exactly one branch
+    sha_branches: dict = {}  # (fname, sha) -> [branch, ...]
+    non_default = [b for b in branch_names if b != default_branch]
+    for bname in non_default:
+        for fname, sha in branch_file_shas[bname].items():
+            key = (fname, sha)
+            sha_branches.setdefault(key, [])
+            sha_branches[key].append(bname)
+
+    all_files = []
+    ordered_branches = [default_branch] + sorted(non_default)
 
     for bname in ordered_branches:
-        other_branches = [b for b in branch_names if b != bname]
-
         for fname, sha in branch_file_shas[bname].items():
 
-            # Check if this exact SHA exists in any other branch for the same file
-            sha_exists_elsewhere = any(
-                branch_file_shas[other].get(fname) == sha
-                for other in other_branches
-            )
-
-            # A file is native to this branch if its SHA is unique here
-            native = not sha_exists_elsewhere
+            if bname == default_branch:
+                # main always shows everything
+                native = True
+            else:
+                main_sha = main_shas.get(fname)
+                # Skip if same as main (inherited, not modified)
+                if main_sha is not None and sha == main_sha:
+                    native = False
+                else:
+                    # This SHA is different from main — but multiple sibling
+                    # branches may share it. Assign it to only one of them
+                    # (the first alphabetically among those that have it).
+                    key     = (fname, sha)
+                    owners  = sorted(sha_branches.get(key, [bname]))
+                    native  = (owners[0] == bname)
 
             if native:
                 m      = branch_file_meta[bname][fname]
