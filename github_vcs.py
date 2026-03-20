@@ -64,7 +64,7 @@ class GitHubVCS:
         return f"{self.MODEL_DIR}/{filename}"
 
     def list_models(self, branch: str = "main") -> list[dict]:
-        """List all model files in a branch."""
+        """List all model files in a branch, with last commit author."""
         try:
             contents = self.repo.get_contents(self.MODEL_DIR, ref=branch)
         except GithubException:
@@ -73,12 +73,23 @@ class GitHubVCS:
         models = []
         for f in contents:
             if f.name.endswith(".json"):
+                # Try to get last commit author for this file
+                author = ""
+                try:
+                    commits = self.repo.get_commits(sha=branch, path=f.path)
+                    first = commits[0] if commits.totalCount > 0 else None
+                    if first:
+                        author = first.commit.author.name
+                except Exception:
+                    pass
+
                 models.append({
                     "name": f.name,
                     "path": f.path,
                     "size_kb": round(f.size / 1024, 1),
                     "sha": f.sha[:8],
                     "download_url": f.download_url,
+                    "author": author,
                 })
         return sorted(models, key=lambda x: x["name"])
 
