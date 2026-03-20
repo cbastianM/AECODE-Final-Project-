@@ -490,12 +490,13 @@ Instrucciones:
 
 def get_branch_native_files(vcs, branch_names: list, default_branch: str = "main") -> list:
     """
-    Returns only files that are new or modified per branch.
-    Uses the repo's actual default branch (e.g. 'main') as base —
-    NOT branch_names[0] which depends on API sort order.
-    Files with the same blob SHA as the default branch are inherited and hidden.
+    Returns only files that are genuinely new or modified in each branch.
+
+    A file is 'native' to branch B if its blob SHA does NOT appear in any
+    other branch for the same filename. This handles chains like:
+        main → jose → sebas
+    where sebas/V2 has the same SHA as jose/V2 and should not be shown twice.
     """
-    # Fallback: if default_branch not in list, use first
     if default_branch not in branch_names:
         default_branch = branch_names[0]
 
@@ -507,19 +508,24 @@ def get_branch_native_files(vcs, branch_names: list, default_branch: str = "main
         branch_file_shas[bname] = {m["name"]: m["sha"] for m in models}
         branch_file_meta[bname] = {m["name"]: m for m in models}
 
-    default_shas = branch_file_shas.get(default_branch, {})
-    all_files    = []
+    all_files = []
 
-    # Put default branch first so the graph renders it on top lane
+    # Put default branch first so the graph renders it on the top lane
     ordered_branches = [default_branch] + [b for b in branch_names if b != default_branch]
 
     for bname in ordered_branches:
+        other_branches = [b for b in branch_names if b != bname]
+
         for fname, sha in branch_file_shas[bname].items():
-            if bname == default_branch:
-                native = True
-            else:
-                default_sha = default_shas.get(fname)
-                native = (default_sha is None) or (sha != default_sha)
+
+            # Check if this exact SHA exists in any other branch for the same file
+            sha_exists_elsewhere = any(
+                branch_file_shas[other].get(fname) == sha
+                for other in other_branches
+            )
+
+            # A file is native to this branch if its SHA is unique here
+            native = not sha_exists_elsewhere
 
             if native:
                 m      = branch_file_meta[bname][fname]
