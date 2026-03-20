@@ -125,7 +125,7 @@ def build_3d_figure(diff: dict, nodes_old: dict, nodes_new: dict) -> go.Figure:
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         legend=dict(
-            orientation="v", yanchor="top", y=0.75, xanchor="left", x=1.02,
+            orientation="v", yanchor="top", y=0.85, xanchor="left", x=1.02,
             font=dict(size=11, color="#94a3b8", family="monospace"),
             bgcolor="rgba(0,0,0,0)",
         ),
