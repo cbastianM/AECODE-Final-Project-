@@ -373,7 +373,9 @@ Instrucciones:
             st.caption("💡 Conecta una API Key de Anthropic en la barra lateral para hacer preguntas interactivas.")
 
     # ── Detailed changes (all closed by default) ────────────────────────
-    for tab_name, key in zip(labels[:5], keys):
+    labels = ["Nodos", "Barras", "Superficies", "Materiales", "Secciones"]
+    keys = ["nodes", "bars", "surfaces", "materials", "sections"]
+    for tab_name, key in zip(labels, keys):
         data = diff[key]
         added_n = len(data.get("added", {}))
         removed_n = len(data.get("removed", {}))
@@ -607,18 +609,20 @@ def render_github_branch_graph(all_files, branch_names, head_idx, compare_idx):
         if is_head:
             parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 4}" fill="none" stroke="#06b6d4" stroke-width="1.5" filter="url(#glow2)" stroke-opacity="0.7"/>')
             parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#06b6d4" stroke="#0a0e17" stroke-width="1.5"/>')
-            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="7" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">H</text>')
+            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="6" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">{all_files[fidx]["prefix"]}</text>')
         elif is_compare:
             parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 4}" fill="none" stroke="#6366f1" stroke-width="1.5" filter="url(#glow2)" stroke-opacity="0.7"/>')
             parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#6366f1" stroke="#0a0e17" stroke-width="1.5"/>')
-            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="7" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">C</text>')
+            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="6" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">{all_files[fidx]["prefix"]}</text>')
         else:
             parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#1e2d42" stroke="{color}" stroke-width="2"/>')
+            parts.append(f'<text x="{px}" y="{py + 3}" fill="#94a3b8" font-size="6" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">{all_files[fidx]["prefix"]}</text>')
 
-        fname = all_files[fidx]["name"].replace(".json", "")
-        if len(fname) > 10:
-            fname = fname[:9] + "…"
-        parts.append(f'<text x="{px}" y="{py + node_radius + 10}" fill="#475569" font-size="6" font-family="JetBrains Mono, monospace" text-anchor="middle">{fname}</text>')
+        author = all_files[fidx].get("author", "")
+        if len(author) > 10:
+            author = author[:9] + "…"
+        if author:
+            parts.append(f'<text x="{px}" y="{py + node_radius + 10}" fill="#475569" font-size="6" font-family="JetBrains Mono, monospace" text-anchor="middle">{author}</text>')
 
     leg_x = svg_w - 120
     parts.append(f'<circle cx="{leg_x}" cy="8" r="4" fill="#06b6d4"/>')
@@ -806,7 +810,18 @@ elif mode == "🐙 GitHub":
         for bname in branch_names:
             models = vcs.list_models(bname)
             for m in models:
-                all_files.append({"branch": bname, "name": m["name"], "size_kb": m["size_kb"], "label": f"{bname}/{m['name']}"})
+                # Extract version prefix (V0, V1, v02, etc.) from filename
+                fname = m["name"].replace(".json", "")
+                prefix = fname.split("_")[0] if "_" in fname else fname
+                all_files.append({
+                    "branch": bname,
+                    "name": m["name"],
+                    "size_kb": m["size_kb"],
+                    "label": f"{bname}/{m['name']}",
+                    "prefix": prefix,
+                    "author": m.get("author", ""),
+                    "short_label": f"{prefix} ({bname})",
+                })
 
         with st.expander(f"📄 Modelos en repositorio ({len(all_files)} archivos en {len(branch_names)} ramas)", expanded=False):
             for bname in branch_names:
@@ -821,7 +836,7 @@ elif mode == "🐙 GitHub":
         if not all_files:
             st.info("No hay modelos JSON en el repositorio. Asegúrate de que los archivos estén en la carpeta `models/`.")
         else:
-            file_labels = [f["label"] for f in all_files]
+            file_labels = [f["short_label"] for f in all_files]
 
             # ── Selectors + Branch graph side by side ───────────────────
             col_sel, col_graph = st.columns([1, 2])
@@ -833,6 +848,7 @@ elif mode == "🐙 GitHub":
                     index=min(len(all_files) - 1, 1) if len(all_files) > 1 else 0,
                     format_func=lambda i: file_labels[i],
                     key="gh_head",
+                    help=all_files[min(len(all_files) - 1, 1)]["name"] if len(all_files) > 1 else "",
                 )
                 compare_idx = st.selectbox(
                     "🟣 Comparar con",
@@ -840,6 +856,7 @@ elif mode == "🐙 GitHub":
                     index=0,
                     format_func=lambda i: file_labels[i],
                     key="gh_compare",
+                    help=all_files[0]["name"] if all_files else "",
                 )
 
             with col_graph:
