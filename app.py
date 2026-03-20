@@ -94,140 +94,102 @@ BRANCH_COLORS = [
 # ═════════════════════════════════════════════════════════════════════════════
 
 def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
-    """Render an inline SVG branch graph with version nodes."""
+    """Render local branch graph — same style as GitHub graph."""
     if not versions:
         return ""
 
     branch_names = list(branches.keys())
     branch_lane  = {name: i for i, name in enumerate(branch_names)}
 
-    node_radius = 12
-    h_spacing   = 70
-    v_spacing   = 40
-    left_pad    = 120
-    top_pad     = 36
+    node_radius = 8
+    h_spacing   = 50
+    v_spacing   = 32
+    left_pad    = 80
+    top_pad     = 20
 
-    max_versions = len(versions)
-    total_lanes  = max(len(branch_names), 1)
-
-    svg_w = left_pad + max_versions * h_spacing + 60
-    svg_h = top_pad + total_lanes * v_spacing + 28
+    total_lanes = max(len(branch_names), 1)
+    svg_w       = max(left_pad + len(versions) * h_spacing + 40, 250)
+    content_h   = top_pad + total_lanes * v_spacing + 16
+    legend_y    = content_h + 4
+    svg_h       = legend_y + 14
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 {svg_w} {svg_h}" '
-        f'style="background: #0a0e17; border-radius: 10px; border: 1px solid #1e2d42;">',
-        '<defs>',
-        '  <filter id="glow"><feGaussianBlur stdDeviation="3" result="g"/>'
-        '  <feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter>',
-        '</defs>',
+        f'style="background: #0a0e17; border-radius: 8px; border: 1px solid #1e2d42;">',
+        '<defs><filter id="glow"><feGaussianBlur stdDeviation="2" result="g"/>'
+        '<feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>',
     ]
 
-    for bname, lane in branch_lane.items():
+    # Branch labels + dashed lane lines
+    for bname in branch_names:
+        lane  = branch_lane[bname]
         by    = top_pad + lane * v_spacing
         color = BRANCH_COLORS[lane % len(BRANCH_COLORS)]
-        parts.append(
-            f'<text x="10" y="{by + 4}" fill="{color}" font-size="9" '
-            f'font-family="JetBrains Mono, monospace" font-weight="600">{bname}</text>'
-        )
-        parts.append(
-            f'<line x1="{left_pad - 20}" y1="{by}" x2="{svg_w - 20}" y2="{by}" '
-            f'stroke="{color}" stroke-opacity="0.15" stroke-width="1" stroke-dasharray="4,4"/>'
-        )
+        parts.append(f'<text x="6" y="{by + 3}" fill="{color}" font-size="8" font-family="JetBrains Mono, monospace" font-weight="600">{bname}</text>')
+        parts.append(f'<line x1="{left_pad - 10}" y1="{by}" x2="{svg_w - 10}" y2="{by}" stroke="{color}" stroke-opacity="0.12" stroke-width="1" stroke-dasharray="4,4"/>')
 
+    # Compute node positions
     positions = {}
     for vidx, v in enumerate(versions):
-        vname = v["name"]
-        bname = st.session_state.local_branch_assignments.get(vname, "main")
+        bname = st.session_state.local_branch_assignments.get(v["name"], "main")
         lane  = branch_lane.get(bname, 0)
-        px    = left_pad + vidx * h_spacing
-        py    = top_pad + lane * v_spacing
-        positions[vidx] = (px, py, bname)
+        positions[vidx] = (left_pad + vidx * h_spacing, top_pad + lane * v_spacing, bname)
 
+    # Connection lines within same branch
     prev_by_branch = {}
     for vidx in range(len(versions)):
         px, py, bname = positions[vidx]
-        lane  = branch_lane.get(bname, 0)
-        color = BRANCH_COLORS[lane % len(BRANCH_COLORS)]
+        color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
         if bname in prev_by_branch:
             ppx, ppy = prev_by_branch[bname]
-            parts.append(
-                f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" '
-                f'stroke="{color}" stroke-width="2" stroke-opacity="0.5"/>'
-            )
+            parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1.5" stroke-opacity="0.5"/>')
         prev_by_branch[bname] = (px, py)
 
-    seen_branches = set()
+    # Fork lines from main to branch start
+    seen = set()
     for vidx in range(len(versions)):
         px, py, bname = positions[vidx]
-        if bname != "main" and bname not in seen_branches:
-            seen_branches.add(bname)
-            for prev_idx in range(vidx - 1, -1, -1):
-                ppx, ppy, prev_b = positions[prev_idx]
-                if prev_b == "main":
-                    lane  = branch_lane.get(bname, 0)
-                    color = BRANCH_COLORS[lane % len(BRANCH_COLORS)]
-                    parts.append(
-                        f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" '
-                        f'stroke="{color}" stroke-width="1.5" stroke-opacity="0.3" stroke-dasharray="6,3"/>'
-                    )
+        if bname != branch_names[0] and bname not in seen:
+            seen.add(bname)
+            for pi in range(vidx - 1, -1, -1):
+                ppx, ppy, pb = positions[pi]
+                if pb == branch_names[0]:
+                    color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
+                    parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
                     break
 
+    # Nodes
     for vidx in range(len(versions)):
         px, py, bname = positions[vidx]
-        lane       = branch_lane.get(bname, 0)
-        color      = BRANCH_COLORS[lane % len(BRANCH_COLORS)]
+        color      = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
         is_head    = vidx == head_idx
         is_compare = vidx == compare_idx
+        vname      = versions[vidx]["name"]
+        prefix     = vname.split("_")[0] if "_" in vname else vname
+        if len(prefix) > 4:
+            prefix = prefix[:4]
 
         if is_head:
-            parts.append(
-                f'<circle cx="{px}" cy="{py}" r="{node_radius + 6}" fill="none" '
-                f'stroke="#06b6d4" stroke-width="2" filter="url(#glow)" stroke-opacity="0.7"/>'
-            )
-            parts.append(
-                f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#06b6d4" '
-                f'stroke="#0a0e17" stroke-width="2"/>'
-            )
-            parts.append(
-                f'<text x="{px}" y="{py + 4}" fill="#fff" font-size="9" '
-                f'font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">v{vidx}</text>'
-            )
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 3}" fill="none" stroke="#06b6d4" stroke-width="1.5" filter="url(#glow)" stroke-opacity="0.6"/>')
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#06b6d4" stroke="#0a0e17" stroke-width="1.5"/>')
+            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="6" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">{prefix}</text>')
         elif is_compare:
-            parts.append(
-                f'<circle cx="{px}" cy="{py}" r="{node_radius + 6}" fill="none" '
-                f'stroke="#6366f1" stroke-width="2" filter="url(#glow)" stroke-opacity="0.7"/>'
-            )
-            parts.append(
-                f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#6366f1" '
-                f'stroke="#0a0e17" stroke-width="2"/>'
-            )
-            parts.append(
-                f'<text x="{px}" y="{py + 4}" fill="#fff" font-size="9" '
-                f'font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">v{vidx}</text>'
-            )
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 3}" fill="none" stroke="#6366f1" stroke-width="1.5" filter="url(#glow)" stroke-opacity="0.6"/>')
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#6366f1" stroke="#0a0e17" stroke-width="1.5"/>')
+            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="6" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">{prefix}</text>')
         else:
-            parts.append(
-                f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#1e2d42" '
-                f'stroke="{color}" stroke-width="2"/>'
-            )
-            parts.append(
-                f'<text x="{px}" y="{py + 4}" fill="#94a3b8" font-size="9" '
-                f'font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">v{vidx}</text>'
-            )
+            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#1e2d42" stroke="{color}" stroke-width="1.5"/>')
+            parts.append(f'<text x="{px}" y="{py + 3}" fill="#94a3b8" font-size="6" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">{prefix}</text>')
 
-        vname = versions[vidx]["name"]
-        if len(vname) > 14:
-            vname = vname[:13] + "…"
-        parts.append(
-            f'<text x="{px}" y="{py + node_radius + 14}" fill="#475569" font-size="7" '
-            f'font-family="JetBrains Mono, monospace" text-anchor="middle">{vname}</text>'
-        )
+        # File name below node
+        label = vname if len(vname) <= 10 else vname[:9] + "…"
+        parts.append(f'<text x="{px}" y="{py + node_radius + 10}" fill="#475569" font-size="5" font-family="JetBrains Mono, monospace" text-anchor="middle">{label}</text>')
 
-    leg_x = svg_w - 200
-    parts.append(f'<circle cx="{leg_x}" cy="14" r="6" fill="#06b6d4"/>')
-    parts.append(f'<text x="{leg_x + 12}" y="18" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">HEAD</text>')
-    parts.append(f'<circle cx="{leg_x + 80}" cy="14" r="6" fill="#6366f1"/>')
-    parts.append(f'<text x="{leg_x + 92}" y="18" fill="#94a3b8" font-size="10" font-family="JetBrains Mono, monospace">Compare</text>')
+    # Legend
+    parts.append(f'<circle cx="{left_pad}" cy="{legend_y}" r="3" fill="#06b6d4"/>')
+    parts.append(f'<text x="{left_pad + 6}" y="{legend_y + 3}" fill="#64748b" font-size="6" font-family="JetBrains Mono, monospace">HEAD</text>')
+    parts.append(f'<circle cx="{left_pad + 46}" cy="{legend_y}" r="3" fill="#6366f1"/>')
+    parts.append(f'<text x="{left_pad + 52}" y="{legend_y + 3}" fill="#64748b" font-size="6" font-family="JetBrains Mono, monospace">Compare</text>')
 
     parts.append("</svg>")
     return "\n".join(parts)
