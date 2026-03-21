@@ -1,6 +1,7 @@
 """
 3D visualization of structural model diffs using Plotly.
-Uses ear-clipping triangulation and opening subtraction from JSAF Auditor.
+Robust triangulation: fan for convex/simple polygons,
+ear-clipping with opening subtraction when needed.
 """
 
 import plotly.graph_objects as go
@@ -23,11 +24,11 @@ OPENING_COLOR = "#4c1d95"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  GEOMETRY HELPERS (from JSAF Auditor)
+#  GEOMETRY HELPERS
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _project_to_2d(points_3d):
-    """Project 3D points to 2D by dropping the least-variant axis."""
+    """Project 3D points to 2D by dropping the axis most aligned with the normal."""
     if len(points_3d) < 3:
         return [(p[0], p[1]) for p in points_3d]
     p0, p1, p2 = points_3d[0], points_3d[1], points_3d[2]
@@ -58,101 +59,38 @@ def _point_in_polygon_2d(px, py, polygon):
     return inside
 
 
-def _point_in_triangle(p, a, b, c):
-    def sign(p1, p2, p3):
-        return (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1])
-    d1, d2, d3 = sign(p, a, b), sign(p, b, c), sign(p, c, a)
-    has_neg = (d1 < 0) or (d2 < 0) or (d3 < 0)
-    has_pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
-    return not (has_neg and has_pos)
+def _fan_triangulate(n_pts):
+    """Simple fan triangulation from vertex 0. Works for convex polygons."""
+    tris = []
+    for t in range(1, n_pts - 1):
+        tris.append((0, t, t + 1))
+    return tris
 
 
-def _polygon_area_sign(pts_2d, indices):
-    """Return +1 for CCW, -1 for CW."""
-    area = 0
-    n = len(indices)
-    for j in range(n):
-        j1 = indices[j]
-        j2 = indices[(j + 1) % n]
-        area += pts_2d[j1][0] * pts_2d[j2][1]
-        area -= pts_2d[j2][0] * pts_2d[j1][1]
-    return 1 if area > 0 else -1
+def _compute_normal_offset(coords, d=0.05):
+    """Compute a small offset vector along the polygon normal."""
+    if len(coords) < 3:
+        return 0, 0, 0
+    ax = coords[1][0] - coords[0][0]
+    ay = coords[1][1] - coords[0][1]
+    az = coords[1][2] - coords[0][2]
+    bx = coords[2][0] - coords[0][0]
+    by = coords[2][1] - coords[0][1]
+    bz = coords[2][2] - coords[0][2]
+    nx = ay * bz - az * by
+    ny = az * bx - ax * bz
+    nz = ax * by - ay * bx
+    length = (nx**2 + ny**2 + nz**2) ** 0.5
+    if length > 0:
+        return nx / length * d, ny / length * d, nz / length * d
+    return 0, 0, d
 
 
-def _ear_clip_triangulate(pts_3d, openings_3d=None):
-    """
-    Triangulate a 3D polygon using ear-clipping, then filter out
-    triangles whose centroid falls inside any opening polygon.
-    """
-    if len(pts_3d) < 3:
-        return []
-
-    pts_2d = _project_to_2d(pts_3d)
-    indices = list(range(len(pts_2d)))
-    poly_sign = _polygon_area_sign(pts_2d, indices)
-
-    triangles = []
-    max_iter = len(indices) * 3
-    iteration = 0
-
-    while len(indices) > 2 and iteration < max_iter:
-        iteration += 1
-        found_ear = False
-        n = len(indices)
-
-        for i in range(n):
-            prev_idx = indices[(i - 1) % n]
-            curr_idx = indices[i]
-            next_idx = indices[(i + 1) % n]
-
-            ax, ay = pts_2d[prev_idx]
-            bx, by = pts_2d[curr_idx]
-            cx, cy = pts_2d[next_idx]
-
-            cross = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
-            if cross * poly_sign <= 0:
-                continue
-
-            ear_ok = True
-            for j in range(n):
-                idx = indices[j]
-                if idx in (prev_idx, curr_idx, next_idx):
-                    continue
-                if _point_in_triangle(pts_2d[idx], pts_2d[prev_idx], pts_2d[curr_idx], pts_2d[next_idx]):
-                    ear_ok = False
-                    break
-
-            if ear_ok:
-                triangles.append((prev_idx, curr_idx, next_idx))
-                indices.pop(i)
-                found_ear = True
-                break
-
-        if not found_ear:
-            break
-
-    # Filter triangles inside openings
-    if openings_3d:
-        openings_2d = [_project_to_2d(op) for op in openings_3d]
-        filtered = []
-        for tri in triangles:
-            i0, i1, i2 = tri
-            cx = (pts_2d[i0][0] + pts_2d[i1][0] + pts_2d[i2][0]) / 3
-            cy = (pts_2d[i0][1] + pts_2d[i1][1] + pts_2d[i2][1]) / 3
-            inside = False
-            for op_2d in openings_2d:
-                if _point_in_polygon_2d(cx, cy, op_2d):
-                    inside = True
-                    break
-            if not inside:
-                filtered.append(tri)
-        return filtered
-
-    return triangles
-
+# ═════════════════════════════════════════════════════════════════════════════
+#  NODE / SURFACE HELPERS
+# ═════════════════════════════════════════════════════════════════════════════
 
 def _get_node_coords(node_uids, all_nodes):
-    """Resolve node UIDs to (X, Y, Z) tuples."""
     coords = []
     for nuid in node_uids:
         n = all_nodes.get(nuid)
@@ -162,26 +100,17 @@ def _get_node_coords(node_uids, all_nodes):
 
 
 def _get_surface_node_uids(surf):
-    """Extract node UIDs from a surface dict."""
     props = surf.get("properties", surf)
     return props.get("_NodeUIDs", surf.get("node_uids", []))
 
 
 def _get_opening_node_uids(opening):
-    """Extract node UIDs from an opening dict."""
     props = opening.get("properties", opening)
     return props.get("_NodeUIDs", opening.get("node_uids", []))
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  BUILD OPENING MAP (surface_uid → list of opening coords)
-# ═════════════════════════════════════════════════════════════════════════════
-
 def _build_opening_map(diff, all_nodes):
-    """
-    Build a map: surface_uid → list of [(x,y,z), ...] for each opening.
-    Includes openings from ALL statuses (unchanged, added, modified, removed).
-    """
+    """Build surface_uid → list of opening coord lists."""
     opening_map = {}
     for status in ["unchanged", "added", "modified", "removed"]:
         items = diff.get("openings", {}).get(status, {})
@@ -200,6 +129,37 @@ def _build_opening_map(diff, all_nodes):
     return opening_map
 
 
+def _triangulate_surface(coords, openings_3d=None):
+    """
+    Triangulate a surface polygon.
+    - Without openings: simple fan triangulation (fast, works for all convex
+      and most concave Robot polygons)
+    - With openings: fan + filter out triangles whose centroid is inside an opening
+    """
+    if len(coords) < 3:
+        return []
+
+    tris = _fan_triangulate(len(coords))
+
+    if openings_3d:
+        pts_2d = _project_to_2d(coords)
+        openings_2d = [_project_to_2d(op) for op in openings_3d]
+        filtered = []
+        for i0, i1, i2 in tris:
+            cx = (pts_2d[i0][0] + pts_2d[i1][0] + pts_2d[i2][0]) / 3
+            cy = (pts_2d[i0][1] + pts_2d[i1][1] + pts_2d[i2][1]) / 3
+            inside = False
+            for op_2d in openings_2d:
+                if _point_in_polygon_2d(cx, cy, op_2d):
+                    inside = True
+                    break
+            if not inside:
+                filtered.append((i0, i1, i2))
+        return filtered
+
+    return tris
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  MAIN FIGURE BUILDER
 # ═════════════════════════════════════════════════════════════════════════════
@@ -208,7 +168,6 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
     fig = go.Figure()
     all_nodes = {**old_nodes, **new_nodes}
 
-    # Pre-build opening map for surface subtraction
     opening_map = _build_opening_map(diff, all_nodes)
 
     # ── Bars ─────────────────────────────────────────────────────────────
@@ -238,7 +197,7 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
                 legendgroup=f"b_{status}",
             ))
 
-    # ── Surfaces (with opening subtraction) ──────────────────────────────
+    # ── Surfaces ─────────────────────────────────────────────────────────
     for status in ["unchanged", "removed", "modified", "added"]:
         items = diff["surfaces"].get(status, {})
         if not items:
@@ -246,7 +205,6 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
         color = STATUS_COLORS[status]
         opacity = 0.1 if status == "unchanged" else 0.4
 
-        # Collect all triangulated mesh data for this status
         mx = {"x": [], "y": [], "z": [], "i": [], "j": [], "k": []}
         edge_xs, edge_ys, edge_zs = [], [], []
 
@@ -256,24 +214,20 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
             if len(coords) < 3:
                 continue
 
-            # Get openings for this surface (if any)
             surf_openings = opening_map.get(uid, None)
-
-            # Triangulate with ear-clipping, subtracting openings
-            tris = _ear_clip_triangulate(coords, surf_openings)
+            tris = _triangulate_surface(coords, surf_openings)
 
             off = len(mx["x"])
             for c in coords:
                 mx["x"].append(c[0])
                 mx["y"].append(c[1])
                 mx["z"].append(c[2])
-
             for i0, i1, i2 in tris:
                 mx["i"].append(off + i0)
                 mx["j"].append(off + i1)
                 mx["k"].append(off + i2)
 
-            # Wireframe edges (closed polygon)
+            # Wireframe: closed polygon border
             for ci in range(len(coords)):
                 cj = (ci + 1) % len(coords)
                 edge_xs.extend([coords[ci][0], coords[cj][0], None])
@@ -287,7 +241,6 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
                 color=color, opacity=opacity,
                 name=f"Superficies {STATUS_LABELS[status]} ({len(items)})",
                 legendgroup=f"s_{status}",
-                showlegend=True,
             ))
 
         if edge_xs:
@@ -302,16 +255,14 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
             ))
 
     # ── Openings (dark purple overlay) ───────────────────────────────────
-    all_openings_exist = False
-    for status in ["unchanged", "removed", "modified", "added"]:
-        items = diff.get("openings", {}).get(status, {})
-        if items:
-            all_openings_exist = True
-            break
+    has_openings = any(
+        diff.get("openings", {}).get(s, {})
+        for s in ["unchanged", "removed", "modified", "added"]
+    )
 
-    if all_openings_exist:
-        op_edge_xs, op_edge_ys, op_edge_zs = [], [], []
+    if has_openings:
         op_mx = {"x": [], "y": [], "z": [], "i": [], "j": [], "k": []}
+        op_ex, op_ey, op_ez = [], [], []
         total_openings = 0
 
         for status in ["unchanged", "removed", "modified", "added"]:
@@ -323,45 +274,24 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
                     continue
 
                 total_openings += 1
-
-                # Compute normal for slight offset (avoid z-fighting)
-                if len(coords) >= 3:
-                    ax = coords[1][0] - coords[0][0]
-                    ay = coords[1][1] - coords[0][1]
-                    az = coords[1][2] - coords[0][2]
-                    bx = coords[2][0] - coords[0][0]
-                    by = coords[2][1] - coords[0][1]
-                    bz = coords[2][2] - coords[0][2]
-                    nx = ay * bz - az * by
-                    ny = az * bx - ax * bz
-                    nz = ax * by - ay * bx
-                    length = (nx**2 + ny**2 + nz**2) ** 0.5
-                    if length > 0:
-                        d = 0.05
-                        nx, ny, nz = nx / length * d, ny / length * d, nz / length * d
-                    else:
-                        nx, ny, nz = 0, 0, 0.05
-                else:
-                    nx, ny, nz = 0, 0, 0.05
+                nx, ny, nz = _compute_normal_offset(coords, 0.05)
 
                 off = len(op_mx["x"])
                 for c in coords:
                     op_mx["x"].append(c[0] + nx)
                     op_mx["y"].append(c[1] + ny)
                     op_mx["z"].append(c[2] + nz)
+                for i0, i1, i2 in _fan_triangulate(len(coords)):
+                    op_mx["i"].append(off + i0)
+                    op_mx["j"].append(off + i1)
+                    op_mx["k"].append(off + i2)
 
-                # Fan triangulation for the opening fill
-                for t in range(1, len(coords) - 1):
-                    op_mx["i"].append(off)
-                    op_mx["j"].append(off + t)
-                    op_mx["k"].append(off + t + 1)
-
-                # Wireframe border
+                # Border
                 for ci in range(len(coords)):
                     cj = (ci + 1) % len(coords)
-                    op_edge_xs.extend([coords[ci][0] + nx, coords[cj][0] + nx, None])
-                    op_edge_ys.extend([coords[ci][1] + ny, coords[cj][1] + ny, None])
-                    op_edge_zs.extend([coords[ci][2] + nz, coords[cj][2] + nz, None])
+                    op_ex.extend([coords[ci][0] + nx, coords[cj][0] + nx, None])
+                    op_ey.extend([coords[ci][1] + ny, coords[cj][1] + ny, None])
+                    op_ez.extend([coords[ci][2] + nz, coords[cj][2] + nz, None])
 
         if op_mx["x"]:
             fig.add_trace(go.Mesh3d(
@@ -370,12 +300,10 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
                 color=OPENING_COLOR, opacity=0.8,
                 name=f"Aberturas ({total_openings})",
                 legendgroup="openings",
-                showlegend=True,
             ))
-
-        if op_edge_xs:
+        if op_ex:
             fig.add_trace(go.Scatter3d(
-                x=op_edge_xs, y=op_edge_ys, z=op_edge_zs,
+                x=op_ex, y=op_ey, z=op_ez,
                 mode="lines",
                 line=dict(width=3, color="#7c3aed"),
                 opacity=0.9,
