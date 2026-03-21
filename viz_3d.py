@@ -231,9 +231,20 @@ def _triangulate_surface(coords, openings_3d=None):
     # Map back to original indices
     tris = [(idx_map[a], idx_map[b], idx_map[c]) for a, b, c in tris]
 
-    # Filter triangles inside openings
+    # Always filter: remove triangles whose centroid is outside the polygon
+    # This catches any ear-clipping artifacts on complex shapes
+    all_2d = _project_to_2d(coords)
+    clean_2d = _project_to_2d(clean)
+    verified = []
+    for i0, i1, i2 in tris:
+        cx = (all_2d[i0][0] + all_2d[i1][0] + all_2d[i2][0]) / 3
+        cy = (all_2d[i0][1] + all_2d[i1][1] + all_2d[i2][1]) / 3
+        if _point_in_polygon_2d(cx, cy, clean_2d):
+            verified.append((i0, i1, i2))
+    tris = verified
+
+    # Additionally filter triangles inside openings
     if openings_3d and tris:
-        all_2d = _project_to_2d(coords)
         openings_2d = [_project_to_2d(op) for op in openings_3d]
         filtered = []
         for i0, i1, i2 in tris:
@@ -330,6 +341,8 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
                 x=mx["x"], y=mx["y"], z=mx["z"],
                 i=mx["i"], j=mx["j"], k=mx["k"],
                 color=color, opacity=opacity,
+                flatshading=True,
+                lighting=dict(ambient=0.8, diffuse=0.2, specular=0.0),
                 name=f"Superficies {STATUS_LABELS[status]} ({len(items)})",
                 legendgroup=f"s_{status}",
             ))
@@ -389,6 +402,8 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
                 x=op_mx["x"], y=op_mx["y"], z=op_mx["z"],
                 i=op_mx["i"], j=op_mx["j"], k=op_mx["k"],
                 color=OPENING_COLOR, opacity=0.8,
+                flatshading=True,
+                lighting=dict(ambient=0.8, diffuse=0.2, specular=0.0),
                 name=f"Aberturas ({total_openings})",
                 legendgroup="openings",
             ))
