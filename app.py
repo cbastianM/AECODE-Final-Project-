@@ -480,6 +480,19 @@ Instrucciones:
                         with st.expander(f"   {label}", expanded=False):
                             for pk, cv in changes.items():
                                 st.markdown(f"- `{pk}`: `{cv['old']}` → `{cv['new']}`")
+                            # Show impacted elements for materials/sections
+                            if key in ("materials", "sections"):
+                                impact_data = diff.get("impact", {}).get(key, {}).get(uid, {})
+                                affected_bars = impact_data.get("bars", [])
+                                affected_surfs = impact_data.get("surfaces", [])
+                                if affected_bars or affected_surfs:
+                                    st.markdown("**🔗 Elementos afectados:**")
+                                    if affected_bars:
+                                        bar_labels = [b["label"] for b in affected_bars[:15]]
+                                        st.caption(f"   Barras ({len(affected_bars)}): {', '.join(bar_labels)}" + (" ..." if len(affected_bars) > 15 else ""))
+                                    if affected_surfs:
+                                        surf_labels = [s["label"] for s in affected_surfs[:15]]
+                                        st.caption(f"   Superficies ({len(affected_surfs)}): {', '.join(surf_labels)}" + (" ..." if len(affected_surfs) > 15 else ""))
                     else:
                         if key == "nodes":
                             st.caption(f"   {label} — ({item['X']}, {item['Y']}, {item['Z']})")
