@@ -1,8 +1,17 @@
 """
 Structural Model Version Control System
 ========================================
-Streamlit app with local project folders, structural diff, 3D visualization,
-and AI assistant. Models are stored in project subfolders within the repo.
+Read-only Streamlit app. Models and branches are managed externally
+(via the Robot plugin). The app auto-detects projects, branches, and
+models from the filesystem:
+
+    projects/
+    └── Edificio-5P/
+        ├── main/
+        │   ├── V0_Base.json
+        │   └── V1_Ampliacion.json
+        └── feature-losa-postensada/
+            └── V2_Postensado.json
 """
 
 import streamlit as st
@@ -70,8 +79,6 @@ defaults = {
     "ai_messages": [],
     "current_diff": None,
     "current_report_text": "",
-    "local_branches": {"main": []},
-    "local_branch_assignments": {},
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -87,18 +94,16 @@ BRANCH_COLORS = [
     "#22c55e", "#ec4899", "#8b5cf6", "#14b8a6",
 ]
 
-# Projects root: same directory as app.py → projects/
 APP_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 PROJECTS_DIR = APP_DIR / "projects"
-PROJECTS_DIR.mkdir(exist_ok=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  PROJECT & MODEL MANAGEMENT (local filesystem)
+#  FILESYSTEM DISCOVERY (read-only)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def get_projects() -> list[str]:
-    """List all project folders inside projects/."""
+    """Detect project folders inside projects/."""
     if not PROJECTS_DIR.exists():
         return []
     return sorted([
@@ -107,20 +112,84 @@ def get_projects() -> list[str]:
     ])
 
 
-def get_project_models(project_name: str) -> list[dict]:
-    """List all .json/.jsaf files in a project folder, sorted by name."""
+def get_branches(project_name: str) -> list[str]:
+    """Detect branch subfolders inside a project. 'main' always first."""
     project_path = PROJECTS_DIR / project_name
     if not project_path.exists():
         return []
+    branches = []
+    for d in sorted(project_path.iterdir()):
+        if d.is_dir() and not d.name.startswith("."):
+            branches.append(d.name)
+    for priority in ("main", "master"):
+        if priority in branches:
+            branches.remove(priority)
+            branches.insert(0, priority)
+            break
+    return branches
+
+
+def parse_version_name(filename_stem: str, is_main: bool) -> dict:
+    """
+    Parse version info from filename convention:
+      - Main branch:   V{n}_{nombre}       → version_num=n, fork_origin=None
+      - Other branches: V{n}_V{origin}_{nombre} → version_num=n, fork_origin="V{origin}"
+
+    Returns dict with: version_num (int or None), fork_origin (str or None),
+                       display_name (str), version_prefix (str).
+    """
+    import re
+    result = {"version_num": None, "fork_origin": None, "display_name": filename_stem, "version_prefix": ""}
+
+    if is_main:
+        # Main: V{n}_{nombre}
+        match = re.match(r'^(V(\d+))_(.+)$', filename_stem, re.IGNORECASE)
+        if match:
+            result["version_prefix"] = match.group(1)
+            result["version_num"] = int(match.group(2))
+            result["display_name"] = match.group(3)
+    else:
+        # Branch: V{n}_V{origin}_{nombre}
+        match = re.match(r'^(V(\d+))_(V(\d+))_(.+)$', filename_stem, re.IGNORECASE)
+        if match:
+            result["version_prefix"] = match.group(1)
+            result["version_num"] = int(match.group(2))
+            result["fork_origin"] = match.group(3)  # e.g. "V2"
+            result["display_name"] = match.group(5)
+        else:
+            # Fallback: same as main pattern
+            match = re.match(r'^(V(\d+))_(.+)$', filename_stem, re.IGNORECASE)
+            if match:
+                result["version_prefix"] = match.group(1)
+                result["version_num"] = int(match.group(2))
+                result["display_name"] = match.group(3)
+
+    return result
+
+
+def get_branch_models(project_name: str, branch_name: str) -> list[dict]:
+    """List all .json/.jsaf files in a branch folder, sorted by name.
+    Parses version naming convention to extract fork origin."""
+    branch_path = PROJECTS_DIR / project_name / branch_name
+    if not branch_path.exists():
+        return []
+
+    is_main = branch_name in ("main", "master")
     models = []
-    for f in sorted(project_path.iterdir()):
+    for f in sorted(branch_path.iterdir()):
         if f.suffix.lower() in (".json", ".jsaf") and f.is_file():
+            vinfo = parse_version_name(f.stem, is_main)
             models.append({
                 "name": f.stem,
                 "filename": f.name,
                 "path": str(f),
                 "size_kb": round(f.stat().st_size / 1024, 1),
                 "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+                "branch": branch_name,
+                "version_num": vinfo["version_num"],
+                "fork_origin": vinfo["fork_origin"],
+                "version_prefix": vinfo["version_prefix"],
+                "display_name": vinfo["display_name"],
             })
     return models
 
@@ -137,42 +206,22 @@ def load_model_cached(file_path: str, _mtime: float) -> tuple:
         return None, str(e)
 
 
-def load_project_model(model_info: dict) -> tuple:
+def load_model(model_info: dict) -> tuple:
     """Load a model using the cache (keyed by path + mtime)."""
     path = model_info["path"]
     mtime = os.path.getmtime(path)
     return load_model_cached(path, mtime)
 
 
-def create_project(name: str) -> bool:
-    """Create a new project folder."""
-    safe_name = "".join(c for c in name if c.isalnum() or c in "-_ ").strip()
-    if not safe_name:
-        return False
-    project_path = PROJECTS_DIR / safe_name
-    project_path.mkdir(exist_ok=True)
-    return True
-
-
-def save_uploaded_model(project_name: str, uploaded_file) -> bool:
-    """Save an uploaded file into a project folder."""
-    project_path = PROJECTS_DIR / project_name
-    project_path.mkdir(exist_ok=True)
-    dest = project_path / uploaded_file.name
-    dest.write_bytes(uploaded_file.getbuffer())
-    return True
-
-
 # ═════════════════════════════════════════════════════════════════════════════
 #  SVG BRANCH GRAPH
 # ═════════════════════════════════════════════════════════════════════════════
 
-def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
-    """Render local branch graph — inline SVG."""
-    if not versions:
+def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
+    """Render branch graph — each version knows its branch from the filesystem."""
+    if not all_versions:
         return ""
 
-    branch_names = list(branches.keys())
     branch_lane = {name: i for i, name in enumerate(branch_names)}
 
     node_radius = 8
@@ -182,7 +231,7 @@ def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
     top_pad = 20
 
     total_lanes = max(len(branch_names), 1)
-    svg_w = max(left_pad + len(versions) * h_spacing + 40, 250)
+    svg_w = max(left_pad + len(all_versions) * h_spacing + 40, 250)
     content_h = top_pad + total_lanes * v_spacing + 16
     legend_y = content_h + 4
     svg_h = legend_y + 14
@@ -202,13 +251,13 @@ def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
         parts.append(f'<line x1="{left_pad - 10}" y1="{by}" x2="{svg_w - 10}" y2="{by}" stroke="{color}" stroke-opacity="0.12" stroke-width="1" stroke-dasharray="4,4"/>')
 
     positions = {}
-    for vidx, v in enumerate(versions):
-        bname = st.session_state.local_branch_assignments.get(v["name"], "main")
+    for vidx, v in enumerate(all_versions):
+        bname = v["branch"]
         lane = branch_lane.get(bname, 0)
         positions[vidx] = (left_pad + vidx * h_spacing, top_pad + lane * v_spacing, bname)
 
     prev_by_branch = {}
-    for vidx in range(len(versions)):
+    for vidx in range(len(all_versions)):
         px, py, bname = positions[vidx]
         color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
         if bname in prev_by_branch:
@@ -216,24 +265,47 @@ def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
             parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1.5" stroke-opacity="0.5"/>')
         prev_by_branch[bname] = (px, py)
 
+    # Fork lines: use fork_origin from filename convention (e.g. V3_V2_Name → forks from V2)
+    # For the first file of each non-main branch, find the main node matching fork_origin
     seen = set()
-    for vidx in range(len(versions)):
+    for vidx in range(len(all_versions)):
         px, py, bname = positions[vidx]
         if bname != branch_names[0] and bname not in seen:
             seen.add(bname)
-            for pi in range(vidx - 1, -1, -1):
-                ppx, ppy, pb = positions[pi]
-                if pb == branch_names[0]:
-                    color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
-                    parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
-                    break
+            fork_origin = all_versions[vidx].get("fork_origin")  # e.g. "V2"
+            color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
 
-    for vidx in range(len(versions)):
+            if fork_origin:
+                # Find the main node whose version_prefix matches fork_origin
+                found = False
+                for pi in range(len(all_versions)):
+                    pv = all_versions[pi]
+                    if pv["branch"] == branch_names[0] and pv.get("version_prefix", "").upper() == fork_origin.upper():
+                        ppx, ppy, _ = positions[pi]
+                        parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
+                        found = True
+                        break
+                # Fallback: if fork_origin not found, connect to last main node before this one
+                if not found:
+                    for pi in range(vidx - 1, -1, -1):
+                        ppx, ppy, pb = positions[pi]
+                        if pb == branch_names[0]:
+                            parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
+                            break
+            else:
+                # No fork_origin info: fallback to last main node before this one
+                for pi in range(vidx - 1, -1, -1):
+                    ppx, ppy, pb = positions[pi]
+                    if pb == branch_names[0]:
+                        parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
+                        break
+
+    for vidx in range(len(all_versions)):
         px, py, bname = positions[vidx]
         color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
         is_head = vidx == head_idx
         is_compare = vidx == compare_idx
-        vname = versions[vidx]["name"]
+        vname = all_versions[vidx]["name"]
         prefix = vname.split("_")[0] if "_" in vname else vname
         if len(prefix) > 4:
             prefix = prefix[:4]
@@ -285,12 +357,12 @@ def generate_local_summary(diff, summary, head_name, compare_name):
         data = diff[key]
         if data.get("added"):
             items = list(data["added"].values())
-            labels = [item.get("label", item.get("name", "?")) for item in items]
-            lines.append(f"- Agregados ({len(items)}): {', '.join(labels[:10])}" + (" ..." if len(labels) > 10 else ""))
+            labels_l = [item.get("label", item.get("name", "?")) for item in items]
+            lines.append(f"- Agregados ({len(items)}): {', '.join(labels_l[:10])}" + (" ..." if len(labels_l) > 10 else ""))
         if data.get("removed"):
             items = list(data["removed"].values())
-            labels = [item.get("label", item.get("name", "?")) for item in items]
-            lines.append(f"- Eliminados ({len(items)}): {', '.join(labels[:10])}" + (" ..." if len(labels) > 10 else ""))
+            labels_l = [item.get("label", item.get("name", "?")) for item in items]
+            lines.append(f"- Eliminados ({len(items)}): {', '.join(labels_l[:10])}" + (" ..." if len(labels_l) > 10 else ""))
         if data.get("modified"):
             items = list(data["modified"].values())
             for item in items[:5]:
@@ -372,9 +444,9 @@ Instrucciones:
             st.markdown(local_summary)
             st.caption("💡 Conecta una API Key de Anthropic en la barra lateral para hacer preguntas interactivas.")
 
-    labels = ["Nodos", "Barras", "Superficies", "Materiales", "Secciones"]
+    tab_labels = ["Nodos", "Barras", "Superficies", "Materiales", "Secciones"]
     keys = ["nodes", "bars", "surfaces", "materials", "sections"]
-    for tab_name, key in zip(labels, keys):
+    for tab_name, key in zip(tab_labels, keys):
         data = diff[key]
         added_n = len(data.get("added", {}))
         removed_n = len(data.get("removed", {}))
@@ -424,7 +496,7 @@ Instrucciones:
 st.markdown("""
 <div class="app-header">
     <h1>🏗️ Structural VCS</h1>
-    <span class="tag">v2.0</span>
+    <span class="tag">v2.1</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -445,47 +517,28 @@ with st.sidebar:
             "Selecciona proyecto",
             projects,
             key="project_select",
-            help="Los proyectos son carpetas dentro de projects/",
+            help="Proyectos detectados en la carpeta projects/",
         )
     else:
         selected_project = None
-        st.info("No hay proyectos. Crea uno abajo o sube archivos.")
 
-    # Create new project
-    with st.expander("➕ Nuevo proyecto", expanded=not projects):
-        new_project_name = st.text_input(
-            "Nombre del proyecto",
-            placeholder="Edificio-Residencial-5P",
-            key="new_project_name",
-        )
-        if st.button("Crear proyecto", use_container_width=True, type="primary", key="btn_create_project"):
-            if new_project_name:
-                if create_project(new_project_name):
-                    st.success(f"Proyecto '{new_project_name}' creado.")
-                    st.rerun()
-                else:
-                    st.error("Nombre inválido.")
-            else:
-                st.warning("Ingresa un nombre.")
+    # ── Branch info ─────────────────────────────────────────────────────
+    branches = get_branches(selected_project) if selected_project else []
 
-    # Upload models to selected project
-    if selected_project:
+    if selected_project and branches:
         st.markdown("---")
-        st.markdown("#### 📤 Subir modelos")
-        uploaded_files = st.file_uploader(
-            f"Subir a **{selected_project}**",
-            type=["json", "jsaf"],
-            accept_multiple_files=True,
-            key="model_uploader",
-            help="Archivos JSON/JSAF con modelos estructurales. Usa prefijos v01_, v02_ para orden.",
-        )
-        if uploaded_files:
-            for uf in uploaded_files:
-                save_uploaded_model(selected_project, uf)
-            st.success(f"{len(uploaded_files)} archivo(s) guardado(s) en {selected_project}/")
-            st.rerun()
+        st.markdown(f"#### 🌿 Ramas ({len(branches)})")
+        for b in branches:
+            n_models = len(get_branch_models(selected_project, b))
+            color = BRANCH_COLORS[branches.index(b) % len(BRANCH_COLORS)]
+            st.markdown(
+                f'<span style="color:{color}; font-family: JetBrains Mono, monospace; '
+                f'font-size: 0.85rem; font-weight: 600;">● {b}</span> '
+                f'<span style="color:#64748b; font-size:0.75rem;">({n_models} modelos)</span>',
+                unsafe_allow_html=True,
+            )
 
-    # AI Key
+    # ── AI Key ──────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("#### 🤖 API Key (IA)")
     api_key = st.text_input(
@@ -499,147 +552,146 @@ with st.sidebar:
 #  MAIN CONTENT
 # ═════════════════════════════════════════════════════════════════════════════
 
-if not selected_project:
+if not projects:
     st.markdown("""
     <div style="text-align: center; padding: 80px 20px;">
         <div style="font-size: 4rem; margin-bottom: 16px;">📂</div>
         <h2 style="color: #e2e8f0; font-family: 'JetBrains Mono', monospace;">
-            Crea o selecciona un proyecto
+            No se detectaron proyectos
         </h2>
-        <p style="color: #64748b; max-width: 500px; margin: 0 auto;">
-            Usa la barra lateral para crear un nuevo proyecto o seleccionar uno existente.
-            Cada proyecto es una carpeta donde se almacenan los modelos estructurales.
+        <p style="color: #64748b; max-width: 520px; margin: 0 auto;">
+            Los proyectos y modelos se gestionan desde el plugin de Robot.<br>
+            La estructura esperada es:
+        </p>
+        <pre style="color: #94a3b8; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;
+                    text-align: left; display: inline-block; margin-top: 12px;">
+projects/
+└── Mi-Proyecto/
+    ├── main/
+    │   ├── V0_Base.json
+    │   └── V1_Ampliacion.json
+    └── feature-postensado/
+        └── V2_Alternativa.json</pre>
+    </div>
+    """, unsafe_allow_html=True)
+
+elif not selected_project:
+    st.info("Selecciona un proyecto en la barra lateral.")
+
+elif not branches:
+    st.markdown(f"""
+    <div style="text-align: center; padding: 60px 20px;">
+        <div style="font-size: 3rem; margin-bottom: 12px;">🌿</div>
+        <h3 style="color: #e2e8f0; font-family: 'JetBrains Mono', monospace;">
+            Proyecto: {selected_project}
+        </h3>
+        <p style="color: #64748b;">
+            No se detectaron ramas (subcarpetas). Los modelos deben estar organizados
+            en subcarpetas como <code>main/</code>, <code>feature-xyz/</code>, etc.
         </p>
     </div>
     """, unsafe_allow_html=True)
-else:
-    models = get_project_models(selected_project)
 
-    if not models:
-        st.markdown(f"""
-        <div style="text-align: center; padding: 60px 20px;">
-            <div style="font-size: 3rem; margin-bottom: 12px;">📄</div>
-            <h3 style="color: #e2e8f0; font-family: 'JetBrains Mono', monospace;">
-                Proyecto: {selected_project}
-            </h3>
-            <p style="color: #64748b;">
-                No hay modelos aún. Sube archivos JSON/JSAF desde la barra lateral.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        # ── Load all models (cached) ────────────────────────────────────
-        versions = []
+else:
+    # ── Collect all versions across all branches ─────────────────────
+    all_versions = []
+    for branch in branches:
+        models = get_branch_models(selected_project, branch)
         for m in models:
-            parsed, raw_or_err = load_project_model(m)
+            parsed, raw_or_err = load_model(m)
             if parsed:
-                versions.append({
+                all_versions.append({
                     "name": m["name"],
                     "filename": m["filename"],
+                    "branch": branch,
                     "parsed": parsed,
                     "raw": raw_or_err,
                     "size_kb": m["size_kb"],
                     "modified": m["modified"],
+                    "version_num": m["version_num"],
+                    "fork_origin": m["fork_origin"],
+                    "version_prefix": m["version_prefix"],
+                    "display_name": m["display_name"],
+                    "label": f"{m['name']} ({branch})",
                 })
             else:
-                st.warning(f"Error al parsear {m['filename']}: {raw_or_err}")
+                st.warning(f"Error al parsear {branch}/{m['filename']}: {raw_or_err}")
 
-        if len(versions) < 2:
-            with st.expander(f"📄 Modelos en **{selected_project}** ({len(versions)})", expanded=True):
-                for v in versions:
-                    p = v["parsed"]
-                    st.caption(
-                        f"**{v['name']}** — {len(p['nodes'])} nodos · {len(p['bars'])} barras · "
-                        f"{len(p['surfaces'])} superficies · {v['size_kb']} KB"
-                    )
-            st.info("Sube al menos 2 modelos para comparar versiones.")
-        else:
-            version_names = [v["name"] for v in versions]
+    if not all_versions:
+        st.info("No se encontraron modelos JSON/JSAF en las ramas de este proyecto.")
 
-            # ── File info ────────────────────────────────────────────────
-            with st.expander(f"📄 Modelos en **{selected_project}** ({len(versions)})", expanded=False):
-                for v in versions:
-                    p = v["parsed"]
-                    branch = st.session_state.local_branch_assignments.get(v["name"], "main")
-                    st.caption(
-                        f"**{v['name']}** — {len(p['nodes'])} nodos · {len(p['bars'])} barras · "
-                        f"{len(p['surfaces'])} superficies · {v['size_kb']} KB · rama: `{branch}`"
-                    )
+    elif len(all_versions) < 2:
+        with st.expander(f"📄 Modelos en **{selected_project}** ({len(all_versions)})", expanded=True):
+            for v in all_versions:
+                p = v["parsed"]
+                st.caption(
+                    f"**{v['name']}** (`{v['branch']}`) — {len(p['nodes'])} nodos · "
+                    f"{len(p['bars'])} barras · {len(p['surfaces'])} superficies · {v['size_kb']} KB"
+                )
+        st.info("Se necesitan al menos 2 modelos para comparar versiones.")
 
-            # ── Branches ─────────────────────────────────────────────────
-            with st.expander("🌿 Ramas", expanded=True):
-                for vn in version_names:
-                    if vn not in st.session_state.local_branch_assignments:
-                        st.session_state.local_branch_assignments[vn] = "main"
+    else:
+        version_labels = [v["label"] for v in all_versions]
 
-                col_nb1, col_nb2 = st.columns([3, 1])
-                with col_nb1:
-                    new_branch_name = st.text_input(
-                        "Nueva rama", placeholder="feature/losa-postensada",
-                        key="local_new_branch", label_visibility="collapsed",
-                    )
-                with col_nb2:
-                    if st.button("Crear rama", use_container_width=True, key="btn_create_branch"):
-                        if new_branch_name and new_branch_name not in st.session_state.local_branches:
-                            st.session_state.local_branches[new_branch_name] = []
-                            st.rerun()
-
-                branch_names = list(st.session_state.local_branches.keys())
-                st.markdown("**Asignar versiones a ramas:**")
-                assign_cols = st.columns(min(len(version_names), 4))
-                for i, vn in enumerate(version_names):
-                    col = assign_cols[i % len(assign_cols)]
-                    current_branch = st.session_state.local_branch_assignments.get(vn, "main")
-                    with col:
-                        new_branch = st.selectbox(
-                            vn, branch_names,
-                            index=branch_names.index(current_branch) if current_branch in branch_names else 0,
-                            key=f"branch_assign_{vn}",
+        # ── File info ────────────────────────────────────────────────
+        with st.expander(f"📄 Modelos en **{selected_project}** ({len(all_versions)} en {len(branches)} ramas)", expanded=False):
+            for branch in branches:
+                bv = [v for v in all_versions if v["branch"] == branch]
+                if bv:
+                    color = BRANCH_COLORS[branches.index(branch) % len(BRANCH_COLORS)]
+                    st.markdown(f'**<span style="color:{color};">{branch}</span>** — {len(bv)} modelo(s)', unsafe_allow_html=True)
+                    for v in bv:
+                        p = v["parsed"]
+                        fork_info = f" · fork de {v['fork_origin']}" if v.get("fork_origin") else ""
+                        st.caption(
+                            f"   📄 {v['filename']} — {len(p['nodes'])} nodos · {len(p['bars'])} barras · "
+                            f"{len(p['surfaces'])} superficies · {v['size_kb']} KB{fork_info}"
                         )
-                        st.session_state.local_branch_assignments[vn] = new_branch
 
-            # ── Version selectors + Branch graph ─────────────────────────
+        # ── Version selectors + Branch graph ─────────────────────────
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        with col1:
+            head_idx = st.selectbox(
+                "🔵 HEAD (versión actual)", range(len(all_versions)),
+                index=len(all_versions) - 1,
+                format_func=lambda i: version_labels[i],
+            )
+        with col2:
+            compare_idx = st.selectbox(
+                "🟣 Comparar con", range(len(all_versions)),
+                index=max(0, len(all_versions) - 2),
+                format_func=lambda i: version_labels[i],
+            )
+
+        svg_html = render_branch_graph_svg(all_versions, branches, head_idx, compare_idx)
+        if svg_html:
+            st.markdown(svg_html, unsafe_allow_html=True)
+
+        # ── Diff ─────────────────────────────────────────────────────
+        if head_idx != compare_idx:
+            head = all_versions[head_idx]
+            compare = all_versions[compare_idx]
+
+            diff = compute_full_diff(compare["parsed"], head["parsed"])
+            summary = build_summary(diff)
+            report_text = diff_to_report_text(diff, head["label"], compare["label"])
+
+            st.session_state.current_diff = diff
+            st.session_state.current_report_text = report_text
+
             st.markdown("---")
-            col1, col2 = st.columns(2)
-            with col1:
-                head_idx = st.selectbox(
-                    "🔵 HEAD (versión actual)", range(len(versions)),
-                    index=len(versions) - 1, format_func=lambda i: version_names[i],
-                )
-            with col2:
-                compare_idx = st.selectbox(
-                    "🟣 Comparar con", range(len(versions)),
-                    index=max(0, len(versions) - 2), format_func=lambda i: version_names[i],
-                )
+            render_diff_view(diff, summary, head["parsed"], compare["parsed"], head["label"], compare["label"], api_key)
 
-            svg_html = render_branch_graph_svg(versions, st.session_state.local_branches, head_idx, compare_idx)
-            if svg_html:
-                st.markdown(svg_html, unsafe_allow_html=True)
-
-            # ── Diff ─────────────────────────────────────────────────────
-            if head_idx != compare_idx:
-                head = versions[head_idx]
-                compare = versions[compare_idx]
-
-                diff = compute_full_diff(compare["parsed"], head["parsed"])
-                summary = build_summary(diff)
-                report_text = diff_to_report_text(diff, head["name"], compare["name"])
-
-                st.session_state.current_diff = diff
-                st.session_state.current_report_text = report_text
-
+            changelog = build_changelog_json(diff, head["label"], compare["label"])
+            with st.sidebar:
                 st.markdown("---")
-                render_diff_view(diff, summary, head["parsed"], compare["parsed"], head["name"], compare["name"], api_key)
-
-                changelog = build_changelog_json(diff, head["name"], compare["name"])
-                with st.sidebar:
-                    st.markdown("---")
-                    st.markdown("#### 📥 Changelog")
-                    st.download_button(
-                        "Descargar changelog JSON",
-                        json.dumps(changelog, indent=2, ensure_ascii=False),
-                        "changelog.json", "application/json", use_container_width=True,
-                    )
-                    st.caption(f"{summary['total']} cambios totales")
-            else:
-                st.warning("Selecciona dos versiones diferentes para comparar.")
+                st.markdown("#### 📥 Changelog")
+                st.download_button(
+                    "Descargar changelog JSON",
+                    json.dumps(changelog, indent=2, ensure_ascii=False),
+                    "changelog.json", "application/json", use_container_width=True,
+                )
+                st.caption(f"{summary['total']} cambios totales")
+        else:
+            st.warning("Selecciona dos versiones diferentes para comparar.")
