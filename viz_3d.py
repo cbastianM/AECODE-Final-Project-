@@ -59,12 +59,78 @@ def _point_in_polygon_2d(px, py, polygon):
     return inside
 
 
+def _point_in_triangle(p, a, b, c):
+    """Check if point p is inside triangle abc."""
+    def sign(p1, p2, p3):
+        return (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1])
+    d1, d2, d3 = sign(p, a, b), sign(p, b, c), sign(p, c, a)
+    has_neg = (d1 < 0) or (d2 < 0) or (d3 < 0)
+    has_pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
+    return not (has_neg and has_pos)
+
+
 def _fan_triangulate(n_pts):
-    """Simple fan triangulation from vertex 0. Works for convex polygons."""
+    """Simple fan triangulation from vertex 0. Only for convex polygons (openings)."""
     tris = []
     for t in range(1, n_pts - 1):
         tris.append((0, t, t + 1))
     return tris
+
+
+def _ear_clip(pts_2d):
+    """Ear-clipping triangulation for arbitrary simple polygons (concave OK)."""
+    indices = list(range(len(pts_2d)))
+    if len(indices) < 3:
+        return []
+
+    # Compute polygon winding
+    area = 0
+    for j in range(len(indices)):
+        j1 = indices[j]
+        j2 = indices[(j + 1) % len(indices)]
+        area += pts_2d[j1][0] * pts_2d[j2][1]
+        area -= pts_2d[j2][0] * pts_2d[j1][1]
+    poly_sign = 1 if area > 0 else -1
+
+    triangles = []
+    max_iter = len(indices) * 3
+    it = 0
+    while len(indices) > 2 and it < max_iter:
+        it += 1
+        found = False
+        n = len(indices)
+        for i in range(n):
+            pi = indices[(i - 1) % n]
+            ci = indices[i]
+            ni = indices[(i + 1) % n]
+
+            ax, ay = pts_2d[pi]
+            bx, by = pts_2d[ci]
+            cx, cy = pts_2d[ni]
+
+            cross = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+            if cross * poly_sign <= 0:
+                continue
+
+            ok = True
+            for j in range(n):
+                idx = indices[j]
+                if idx in (pi, ci, ni):
+                    continue
+                if _point_in_triangle(pts_2d[idx], pts_2d[pi], pts_2d[ci], pts_2d[ni]):
+                    ok = False
+                    break
+
+            if ok:
+                triangles.append((pi, ci, ni))
+                indices.pop(i)
+                found = True
+                break
+
+        if not found:
+            break
+
+    return triangles
 
 
 def _compute_normal_offset(coords, d=0.05):
@@ -132,22 +198,47 @@ def _build_opening_map(diff, all_nodes):
 def _triangulate_surface(coords, openings_3d=None):
     """
     Triangulate a surface polygon.
-    - Without openings: simple fan triangulation (fast, works for all convex
-      and most concave Robot polygons)
-    - With openings: fan + filter out triangles whose centroid is inside an opening
+    - 3-4 nodes without openings: fast fan triangulation
+    - 5+ nodes or with openings: ear-clipping (handles concave L-shaped floors)
+    Deduplicates consecutive identical vertices before triangulating.
     """
     if len(coords) < 3:
         return []
 
-    tris = _fan_triangulate(len(coords))
+    # Remove consecutive duplicate points (Robot sometimes exports these)
+    clean = [coords[0]]
+    idx_map = [0]  # maps clean index → original index
+    for i in range(1, len(coords)):
+        if coords[i] != coords[i - 1]:
+            clean.append(coords[i])
+            idx_map.append(i)
+    # Also check last == first wrap-around
+    if len(clean) > 1 and clean[-1] == clean[0]:
+        clean.pop()
+        idx_map.pop()
 
-    if openings_3d:
-        pts_2d = _project_to_2d(coords)
+    if len(clean) < 3:
+        return []
+
+    # Simple cases: fan is fine
+    if len(clean) <= 4 and not openings_3d:
+        tris = _fan_triangulate(len(clean))
+        return [(idx_map[a], idx_map[b], idx_map[c]) for a, b, c in tris]
+
+    # Complex polygons: ear-clipping
+    pts_2d = _project_to_2d(clean)
+    tris = _ear_clip(pts_2d)
+    # Map back to original indices
+    tris = [(idx_map[a], idx_map[b], idx_map[c]) for a, b, c in tris]
+
+    # Filter triangles inside openings
+    if openings_3d and tris:
+        all_2d = _project_to_2d(coords)
         openings_2d = [_project_to_2d(op) for op in openings_3d]
         filtered = []
         for i0, i1, i2 in tris:
-            cx = (pts_2d[i0][0] + pts_2d[i1][0] + pts_2d[i2][0]) / 3
-            cy = (pts_2d[i0][1] + pts_2d[i1][1] + pts_2d[i2][1]) / 3
+            cx = (all_2d[i0][0] + all_2d[i1][0] + all_2d[i2][0]) / 3
+            cy = (all_2d[i0][1] + all_2d[i1][1] + all_2d[i2][1]) / 3
             inside = False
             for op_2d in openings_2d:
                 if _point_in_polygon_2d(cx, cy, op_2d):
