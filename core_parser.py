@@ -11,7 +11,10 @@ IGNORE_FIELDS_BAR = {
     "Name", "Id", "name", "id",
     "ExpandedCrossSection", "ExpandedResults", "ExpandedNodes",
     "Nodes", "StoreyID",
-    "CrossSection",  # raw Id — replaced by _CrossSectionName
+    "CrossSection",   # raw Id — replaced by _CrossSectionName
+    "StoreyNumber",   # metadata
+    "Length",         # computed field
+    "IsGrouped",     # metadata
 }
 
 IGNORE_FIELDS_SURFACE = {
@@ -20,7 +23,10 @@ IGNORE_FIELDS_SURFACE = {
     "ExpandedMeshResults", "ExpandedNodes",
     "Openings", "Regions", "Macro",
     "Nodes", "StoreyID", "InternalNodes",
-    "Material",  # raw Id — replaced by _MaterialName
+    "Material",      # raw Id (single) — replaced by _MaterialName
+    "Materials",     # raw Id list — replaced by _MaterialName
+    "StoreyNumber",  # metadata, not structural
+    "Area",          # computed field, not a design input
 }
 
 IGNORE_FIELDS_MATERIAL = {"Name", "Id", "name", "id"}
@@ -169,7 +175,16 @@ def parse_model(data: dict) -> dict:
         if len(s_node_uids) < 3:
             continue
         uid = surface_uid(s_node_uids)
-        mat_name = _resolve_name(raw_materials, s.get("Material"), "?")
+        # Resolve material — handle both "Material" (single Id) and "Materials" (list of Ids)
+        mat_ref = s.get("Material")
+        mat_list = s.get("Materials", [])
+        if mat_ref:
+            mat_name = _resolve_name(raw_materials, mat_ref, "?")
+        elif mat_list:
+            mat_names_list = [_resolve_name(raw_materials, mid, mid) for mid in mat_list]
+            mat_name = ", ".join(mat_names_list)
+        else:
+            mat_name = "?"
         props = {k: v for k, v in s.items() if k not in IGNORE_FIELDS_SURFACE and v is not None}
         props["_MaterialName"] = mat_name
         props["_NodeUIDs"] = s_node_uids
