@@ -141,9 +141,31 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
             if len(coords) < 3:
                 continue
 
-            xs = [c[0] for c in coords]
-            ys = [c[1] for c in coords]
-            zs = [c[2] for c in coords]
+            # Compute surface normal to offset the opening slightly above
+            # so it doesn't z-fight with the parent surface
+            if len(coords) >= 3:
+                ax = coords[1][0] - coords[0][0]
+                ay = coords[1][1] - coords[0][1]
+                az = coords[1][2] - coords[0][2]
+                bx = coords[2][0] - coords[0][0]
+                by = coords[2][1] - coords[0][1]
+                bz = coords[2][2] - coords[0][2]
+                # Cross product
+                nx = ay * bz - az * by
+                ny = az * bx - ax * bz
+                nz = ax * by - ay * bx
+                length = (nx**2 + ny**2 + nz**2) ** 0.5
+                if length > 0:
+                    offset = 0.05  # small offset along normal
+                    nx, ny, nz = nx/length * offset, ny/length * offset, nz/length * offset
+                else:
+                    nx, ny, nz = 0, 0, 0.05
+            else:
+                nx, ny, nz = 0, 0, 0.05
+
+            xs = [c[0] + nx for c in coords]
+            ys = [c[1] + ny for c in coords]
+            zs = [c[2] + nz for c in coords]
 
             ii, jj, kk = [], [], []
             for t in range(1, len(coords) - 1):
@@ -152,14 +174,15 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
                 kk.append(t + 1)
 
             label = opening.get("label", opening.get("name", uid))
+            is_first = (uid == list(items.keys())[0])
             fig.add_trace(go.Mesh3d(
                 x=xs, y=ys, z=zs,
                 i=ii, j=jj, k=kk,
                 color=OPENING_COLOR,
                 opacity=0.85,
-                name=f"{label} — Abertura ({STATUS_LABELS[status]})",
+                name=f"Aberturas ({STATUS_LABELS[status]})" if is_first else label,
                 legendgroup="openings",
-                showlegend=(uid == list(items.keys())[0] and status == "unchanged") or (status != "unchanged" and uid == list(items.keys())[0]),
+                showlegend=is_first,
                 hovertext=label,
                 hoverinfo="text",
             ))
