@@ -1,7 +1,8 @@
 """
 Structural Model Version Control System
 ========================================
-Streamlit app with GitHub backend, structural diff, 3D visualization, and AI assistant.
+Streamlit app with local project folders, structural diff, 3D visualization,
+and AI assistant. Models are stored in project subfolders within the repo.
 """
 
 import streamlit as st
@@ -10,6 +11,7 @@ import urllib.request
 import urllib.error
 import sys
 import os
+from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -65,9 +67,6 @@ st.markdown("""
 
 # ─── Session state ──────────────────────────────────────────────────────────
 defaults = {
-    "github_connected": False,
-    "vcs": None,
-    "models_cache": {},
     "ai_messages": [],
     "current_diff": None,
     "current_report_text": "",
@@ -80,7 +79,7 @@ for k, v in defaults.items():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  CONSTANTS
+#  CONSTANTS & PATHS
 # ═════════════════════════════════════════════════════════════════════════════
 
 BRANCH_COLORS = [
@@ -88,30 +87,105 @@ BRANCH_COLORS = [
     "#22c55e", "#ec4899", "#8b5cf6", "#14b8a6",
 ]
 
+# Projects root: same directory as app.py → projects/
+APP_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+PROJECTS_DIR = APP_DIR / "projects"
+PROJECTS_DIR.mkdir(exist_ok=True)
+
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  SVG BRANCH GRAPH — LOCAL MODE
+#  PROJECT & MODEL MANAGEMENT (local filesystem)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def get_projects() -> list[str]:
+    """List all project folders inside projects/."""
+    if not PROJECTS_DIR.exists():
+        return []
+    return sorted([
+        d.name for d in PROJECTS_DIR.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
+    ])
+
+
+def get_project_models(project_name: str) -> list[dict]:
+    """List all .json/.jsaf files in a project folder, sorted by name."""
+    project_path = PROJECTS_DIR / project_name
+    if not project_path.exists():
+        return []
+    models = []
+    for f in sorted(project_path.iterdir()):
+        if f.suffix.lower() in (".json", ".jsaf") and f.is_file():
+            models.append({
+                "name": f.stem,
+                "filename": f.name,
+                "path": str(f),
+                "size_kb": round(f.stat().st_size / 1024, 1),
+                "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+            })
+    return models
+
+
+@st.cache_data(show_spinner=False)
+def load_model_cached(file_path: str, _mtime: float) -> tuple:
+    """Load and parse a model from disk. Cached by path + modification time."""
+    try:
+        with open(file_path, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+        parsed = parse_model(raw)
+        return parsed, raw
+    except Exception as e:
+        return None, str(e)
+
+
+def load_project_model(model_info: dict) -> tuple:
+    """Load a model using the cache (keyed by path + mtime)."""
+    path = model_info["path"]
+    mtime = os.path.getmtime(path)
+    return load_model_cached(path, mtime)
+
+
+def create_project(name: str) -> bool:
+    """Create a new project folder."""
+    safe_name = "".join(c for c in name if c.isalnum() or c in "-_ ").strip()
+    if not safe_name:
+        return False
+    project_path = PROJECTS_DIR / safe_name
+    project_path.mkdir(exist_ok=True)
+    return True
+
+
+def save_uploaded_model(project_name: str, uploaded_file) -> bool:
+    """Save an uploaded file into a project folder."""
+    project_path = PROJECTS_DIR / project_name
+    project_path.mkdir(exist_ok=True)
+    dest = project_path / uploaded_file.name
+    dest.write_bytes(uploaded_file.getbuffer())
+    return True
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  SVG BRANCH GRAPH
 # ═════════════════════════════════════════════════════════════════════════════
 
 def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
-    """Render local branch graph — same style as GitHub graph."""
+    """Render local branch graph — inline SVG."""
     if not versions:
         return ""
 
     branch_names = list(branches.keys())
-    branch_lane  = {name: i for i, name in enumerate(branch_names)}
+    branch_lane = {name: i for i, name in enumerate(branch_names)}
 
     node_radius = 8
-    h_spacing   = 50
-    v_spacing   = 32
-    left_pad    = 80
-    top_pad     = 20
+    h_spacing = 50
+    v_spacing = 32
+    left_pad = 80
+    top_pad = 20
 
     total_lanes = max(len(branch_names), 1)
-    svg_w       = max(left_pad + len(versions) * h_spacing + 40, 250)
-    content_h   = top_pad + total_lanes * v_spacing + 16
-    legend_y    = content_h + 4
-    svg_h       = legend_y + 14
+    svg_w = max(left_pad + len(versions) * h_spacing + 40, 250)
+    content_h = top_pad + total_lanes * v_spacing + 16
+    legend_y = content_h + 4
+    svg_h = legend_y + 14
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 {svg_w} {svg_h}" '
@@ -120,22 +194,19 @@ def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
         '<feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>',
     ]
 
-    # Branch labels + dashed lane lines
     for bname in branch_names:
-        lane  = branch_lane[bname]
-        by    = top_pad + lane * v_spacing
+        lane = branch_lane[bname]
+        by = top_pad + lane * v_spacing
         color = BRANCH_COLORS[lane % len(BRANCH_COLORS)]
         parts.append(f'<text x="6" y="{by + 3}" fill="{color}" font-size="8" font-family="JetBrains Mono, monospace" font-weight="600">{bname}</text>')
         parts.append(f'<line x1="{left_pad - 10}" y1="{by}" x2="{svg_w - 10}" y2="{by}" stroke="{color}" stroke-opacity="0.12" stroke-width="1" stroke-dasharray="4,4"/>')
 
-    # Compute node positions
     positions = {}
     for vidx, v in enumerate(versions):
         bname = st.session_state.local_branch_assignments.get(v["name"], "main")
-        lane  = branch_lane.get(bname, 0)
+        lane = branch_lane.get(bname, 0)
         positions[vidx] = (left_pad + vidx * h_spacing, top_pad + lane * v_spacing, bname)
 
-    # Connection lines within same branch
     prev_by_branch = {}
     for vidx in range(len(versions)):
         px, py, bname = positions[vidx]
@@ -145,7 +216,6 @@ def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
             parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1.5" stroke-opacity="0.5"/>')
         prev_by_branch[bname] = (px, py)
 
-    # Fork lines from main to branch start
     seen = set()
     for vidx in range(len(versions)):
         px, py, bname = positions[vidx]
@@ -158,14 +228,13 @@ def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
                     parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
                     break
 
-    # Nodes
     for vidx in range(len(versions)):
         px, py, bname = positions[vidx]
-        color      = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
-        is_head    = vidx == head_idx
+        color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
+        is_head = vidx == head_idx
         is_compare = vidx == compare_idx
-        vname      = versions[vidx]["name"]
-        prefix     = vname.split("_")[0] if "_" in vname else vname
+        vname = versions[vidx]["name"]
+        prefix = vname.split("_")[0] if "_" in vname else vname
         if len(prefix) > 4:
             prefix = prefix[:4]
 
@@ -181,106 +250,8 @@ def render_branch_graph_svg(versions, branches, head_idx, compare_idx):
             parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#1e2d42" stroke="{color}" stroke-width="1.5"/>')
             parts.append(f'<text x="{px}" y="{py + 3}" fill="#94a3b8" font-size="6" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">{prefix}</text>')
 
-        # File name below node
         label = vname if len(vname) <= 10 else vname[:9] + "…"
         parts.append(f'<text x="{px}" y="{py + node_radius + 10}" fill="#475569" font-size="5" font-family="JetBrains Mono, monospace" text-anchor="middle">{label}</text>')
-
-    # Legend
-    parts.append(f'<circle cx="{left_pad}" cy="{legend_y}" r="3" fill="#06b6d4"/>')
-    parts.append(f'<text x="{left_pad + 6}" y="{legend_y + 3}" fill="#64748b" font-size="6" font-family="JetBrains Mono, monospace">HEAD</text>')
-    parts.append(f'<circle cx="{left_pad + 46}" cy="{legend_y}" r="3" fill="#6366f1"/>')
-    parts.append(f'<text x="{left_pad + 52}" y="{legend_y + 3}" fill="#64748b" font-size="6" font-family="JetBrains Mono, monospace">Compare</text>')
-
-    parts.append("</svg>")
-    return "\n".join(parts)
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  SVG BRANCH GRAPH — GITHUB MODE
-# ═════════════════════════════════════════════════════════════════════════════
-
-def render_github_branch_graph(all_files, branch_names, head_idx, compare_idx):
-    """Render SVG branch graph for GitHub mode showing branches and their files."""
-    if not all_files:
-        return ""
-
-    branch_lane = {name: i for i, name in enumerate(branch_names)}
-    node_radius = 8
-    h_spacing   = 50
-    v_spacing   = 32
-    left_pad    = 80
-    top_pad     = 20
-
-    total_lanes = max(len(branch_names), 1)
-    svg_w       = max(left_pad + len(all_files) * h_spacing + 40, 250)
-    content_h   = top_pad + total_lanes * v_spacing + 16
-    legend_y    = content_h + 4
-    svg_h       = legend_y + 14
-
-    parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 {svg_w} {svg_h}" '
-        f'style="background: #0a0e17; border-radius: 8px; border: 1px solid #1e2d42;">',
-        '<defs><filter id="glow2"><feGaussianBlur stdDeviation="2" result="g"/>'
-        '<feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>',
-    ]
-
-    for bname in branch_names:
-        lane  = branch_lane[bname]
-        by    = top_pad + lane * v_spacing
-        color = BRANCH_COLORS[lane % len(BRANCH_COLORS)]
-        parts.append(f'<text x="6" y="{by + 3}" fill="{color}" font-size="8" font-family="JetBrains Mono, monospace" font-weight="600">{bname}</text>')
-        parts.append(f'<line x1="{left_pad - 10}" y1="{by}" x2="{svg_w - 10}" y2="{by}" stroke="{color}" stroke-opacity="0.12" stroke-width="1" stroke-dasharray="4,4"/>')
-
-    positions = {}
-    for fidx, f in enumerate(all_files):
-        lane = branch_lane.get(f["branch"], 0)
-        positions[fidx] = (left_pad + fidx * h_spacing, top_pad + lane * v_spacing, f["branch"])
-
-    prev_by_branch = {}
-    for fidx in range(len(all_files)):
-        px, py, bname = positions[fidx]
-        color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
-        if bname in prev_by_branch:
-            ppx, ppy = prev_by_branch[bname]
-            parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1.5" stroke-opacity="0.5"/>')
-        prev_by_branch[bname] = (px, py)
-
-    seen = set()
-    for fidx in range(len(all_files)):
-        px, py, bname = positions[fidx]
-        if bname != branch_names[0] and bname not in seen:
-            seen.add(bname)
-            for pi in range(fidx - 1, -1, -1):
-                ppx, ppy, pb = positions[pi]
-                if pb == branch_names[0]:
-                    color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
-                    parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
-                    break
-
-    for fidx in range(len(all_files)):
-        px, py, bname = positions[fidx]
-        color      = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
-        is_head    = fidx == head_idx
-        is_compare = fidx == compare_idx
-        prefix     = all_files[fidx]["prefix"]
-
-        if is_head:
-            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 3}" fill="none" stroke="#06b6d4" stroke-width="1.5" filter="url(#glow2)" stroke-opacity="0.6"/>')
-            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#06b6d4" stroke="#0a0e17" stroke-width="1.5"/>')
-            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="6" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">{prefix}</text>')
-        elif is_compare:
-            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 3}" fill="none" stroke="#6366f1" stroke-width="1.5" filter="url(#glow2)" stroke-opacity="0.6"/>')
-            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#6366f1" stroke="#0a0e17" stroke-width="1.5"/>')
-            parts.append(f'<text x="{px}" y="{py + 3}" fill="#fff" font-size="6" font-weight="700" text-anchor="middle" font-family="JetBrains Mono, monospace">{prefix}</text>')
-        else:
-            parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#1e2d42" stroke="{color}" stroke-width="1.5"/>')
-            parts.append(f'<text x="{px}" y="{py + 3}" fill="#94a3b8" font-size="6" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">{prefix}</text>')
-
-        author = all_files[fidx].get("author", "")
-        if len(author) > 10:
-            author = author[:9] + "…"
-        if author:
-            parts.append(f'<text x="{px}" y="{py + node_radius + 10}" fill="#475569" font-size="5" font-family="JetBrains Mono, monospace" text-anchor="middle">{author}</text>')
 
     parts.append(f'<circle cx="{left_pad}" cy="{legend_y}" r="3" fill="#06b6d4"/>')
     parts.append(f'<text x="{left_pad + 6}" y="{legend_y + 3}" fill="#64748b" font-size="6" font-family="JetBrains Mono, monospace">HEAD</text>')
@@ -313,18 +284,18 @@ def generate_local_summary(diff, summary, head_name, compare_name):
         lines.append(f"**{cat_name}:**")
         data = diff[key]
         if data.get("added"):
-            items  = list(data["added"].values())
+            items = list(data["added"].values())
             labels = [item.get("label", item.get("name", "?")) for item in items]
             lines.append(f"- Agregados ({len(items)}): {', '.join(labels[:10])}" + (" ..." if len(labels) > 10 else ""))
         if data.get("removed"):
-            items  = list(data["removed"].values())
+            items = list(data["removed"].values())
             labels = [item.get("label", item.get("name", "?")) for item in items]
             lines.append(f"- Eliminados ({len(items)}): {', '.join(labels[:10])}" + (" ..." if len(labels) > 10 else ""))
         if data.get("modified"):
             items = list(data["modified"].values())
             for item in items[:5]:
-                label       = item.get("label", item.get("name", "?"))
-                changes     = item.get("_changes", {})
+                label = item.get("label", item.get("name", "?"))
+                changes = item.get("_changes", {})
                 change_list = [f"`{pk}`: {cv['old']} → {cv['new']}" for pk, cv in list(changes.items())[:3]]
                 lines.append(f"- Modificado {label}: {', '.join(change_list)}")
             if len(items) > 5:
@@ -353,7 +324,7 @@ def render_diff_view(diff, summary, model_head, model_compare, head_name, compar
                 with st.chat_message("user"):
                     st.markdown(prompt)
 
-                changelog     = build_changelog_json(diff, head_name, compare_name)
+                changelog = build_changelog_json(diff, head_name, compare_name)
                 system_prompt = f"""Eres un asistente experto en ingeniería estructural. El usuario tiene un gestor de versiones de modelos estructurales y quiere entender los cambios entre versiones.
 
 Aquí está el changelog completo (solo elementos que cambiaron):
@@ -370,24 +341,24 @@ Instrucciones:
                     with st.spinner("Analizando..."):
                         try:
                             messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.ai_messages]
-                            payload  = json.dumps({
-                                "model":      "claude-sonnet-4-20250514",
+                            payload = json.dumps({
+                                "model": "claude-sonnet-4-20250514",
                                 "max_tokens": 2000,
-                                "system":     system_prompt,
-                                "messages":   messages,
+                                "system": system_prompt,
+                                "messages": messages,
                             })
                             req = urllib.request.Request(
                                 "https://api.anthropic.com/v1/messages",
                                 data=payload.encode("utf-8"),
                                 headers={
-                                    "Content-Type":      "application/json",
-                                    "x-api-key":         api_key,
+                                    "Content-Type": "application/json",
+                                    "x-api-key": api_key,
                                     "anthropic-version": "2023-06-01",
                                 },
                                 method="POST",
                             )
                             with urllib.request.urlopen(req, timeout=30) as resp:
-                                result  = json.loads(resp.read().decode())
+                                result = json.loads(resp.read().decode())
                                 ai_text = result["content"][0]["text"]
                             st.markdown(ai_text)
                             st.session_state.ai_messages.append({"role": "assistant", "content": ai_text})
@@ -402,13 +373,13 @@ Instrucciones:
             st.caption("💡 Conecta una API Key de Anthropic en la barra lateral para hacer preguntas interactivas.")
 
     labels = ["Nodos", "Barras", "Superficies", "Materiales", "Secciones"]
-    keys   = ["nodes", "bars", "surfaces", "materials", "sections"]
+    keys = ["nodes", "bars", "surfaces", "materials", "sections"]
     for tab_name, key in zip(labels, keys):
-        data         = diff[key]
-        added_n      = len(data.get("added", {}))
-        removed_n    = len(data.get("removed", {}))
-        modified_n   = len(data.get("modified", {}))
-        unchanged_n  = len(data.get("unchanged", {}))
+        data = diff[key]
+        added_n = len(data.get("added", {}))
+        removed_n = len(data.get("removed", {}))
+        modified_n = len(data.get("modified", {}))
+        unchanged_n = len(data.get("unchanged", {}))
         total_changes = added_n + removed_n + modified_n
 
         if total_changes == 0:
@@ -441,110 +412,9 @@ Instrucciones:
                         if key == "nodes":
                             st.caption(f"   {label} — ({item['X']}, {item['Y']}, {item['Z']})")
                         else:
-                            name  = item.get("name", "")
+                            name = item.get("name", "")
                             extra = f" — {name}" if name and name != label else ""
                             st.caption(f"   {label}{extra}")
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  GITHUB HELPER — branch-native files only
-# ═════════════════════════════════════════════════════════════════════════════
-
-def get_branch_native_files(vcs, branch_names: list, default_branch: str = "main") -> list:
-    """
-    - default_branch (main): ALWAYS shows all its files.
-    - Other branches: show only files whose SHA differs from main's SHA
-      for the same filename (i.e. the file was modified in that branch).
-      If a file doesn't exist in main at all, it's also shown.
-    This prevents files shared between sibling branches (jose/V2 == sebas/V2)
-    from appearing in both, by only comparing against main.
-    Sibling duplicates are broken by showing the file only in the branch
-    that has the highest sort order (last alphabetically) — so only one
-    branch "owns" each unique non-main SHA.
-    """
-    if default_branch not in branch_names:
-        default_branch = branch_names[0]
-
-    branch_file_shas = {}
-    branch_file_meta = {}
-
-    for bname in branch_names:
-        models = vcs.list_models(bname)
-        branch_file_shas[bname] = {m["name"]: m["sha"] for m in models}
-        branch_file_meta[bname] = {m["name"]: m for m in models}
-
-    main_shas = branch_file_shas.get(default_branch, {})
-
-    # For non-main branches: map (fname, sha) -> list of branches that have it
-    # so we can assign each unique SHA to exactly one branch
-    sha_branches: dict = {}  # (fname, sha) -> [branch, ...]
-    non_default = [b for b in branch_names if b != default_branch]
-    for bname in non_default:
-        for fname, sha in branch_file_shas[bname].items():
-            key = (fname, sha)
-            sha_branches.setdefault(key, [])
-            sha_branches[key].append(bname)
-
-    all_files = []
-    ordered_branches = [default_branch] + sorted(non_default)
-
-    for bname in ordered_branches:
-        for fname, sha in branch_file_shas[bname].items():
-
-            if bname == default_branch:
-                # main always shows everything
-                native = True
-            else:
-                main_sha = main_shas.get(fname)
-                # Skip if same as main (inherited, not modified)
-                if main_sha is not None and sha == main_sha:
-                    native = False
-                else:
-                    # This SHA is different from main — but multiple sibling
-                    # branches may share it. Assign it to only one of them
-                    # (the first alphabetically among those that have it).
-                    key     = (fname, sha)
-                    owners  = sorted(sha_branches.get(key, [bname]))
-                    native  = (owners[0] == bname)
-
-            if native:
-                m      = branch_file_meta[bname][fname]
-                prefix = (
-                    fname.replace(".json", "").split("_")[0]
-                    if "_" in fname
-                    else fname.replace(".json", "")
-                )
-                all_files.append({
-                    "branch":      bname,
-                    "name":        fname,
-                    "size_kb":     m["size_kb"],
-                    "label":       f"{bname}/{fname}",
-                    "prefix":      prefix,
-                    "author":      m.get("author", ""),
-                    "short_label": f"{prefix} ({bname})",
-                    "sha":         sha,
-                })
-
-    def sort_key(f):
-        return (0 if f["branch"] == default_branch else 1, f["branch"], f["name"])
-
-    return sorted(all_files, key=sort_key)
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  HELPERS
-# ═════════════════════════════════════════════════════════════════════════════
-
-def load_and_parse(file_or_data, name: str) -> tuple:
-    try:
-        if isinstance(file_or_data, dict):
-            raw = file_or_data
-        else:
-            raw = json.loads(file_or_data.read().decode("utf-8"))
-        return parse_model(raw), raw
-    except Exception as e:
-        st.error(f"Error al parsear {name}: {e}")
-        return None, None
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -554,7 +424,7 @@ def load_and_parse(file_or_data, name: str) -> tuple:
 st.markdown("""
 <div class="app-header">
     <h1>🏗️ Structural VCS</h1>
-    <span class="tag">v1.0</span>
+    <span class="tag">v2.0</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -566,99 +436,137 @@ st.markdown("""
 with st.sidebar:
     st.markdown("### ⚙️ Configuración")
 
-    mode = st.radio(
-        "Fuente de datos",
-        ["📁 Local (upload)", "🐙 GitHub"],
-        index=0,
-        help="Local: sube archivos JSON. GitHub: conecta a un repositorio.",
-    )
+    # ── Project selector ────────────────────────────────────────────────
+    st.markdown("#### 📂 Proyecto")
+    projects = get_projects()
 
-    if mode == "🐙 GitHub":
-        st.markdown("---")
-        st.markdown("#### 🔗 Conexión GitHub")
+    if projects:
+        selected_project = st.selectbox(
+            "Selecciona proyecto",
+            projects,
+            key="project_select",
+            help="Los proyectos son carpetas dentro de projects/",
+        )
+    else:
+        selected_project = None
+        st.info("No hay proyectos. Crea uno abajo o sube archivos.")
 
-        def parse_repo_input(user, repo_input):
-            repo_input = repo_input.strip().rstrip("/")
-            if "github.com/" in repo_input:
-                parts = repo_input.split("github.com/")[-1].split("/")
-                if len(parts) >= 2:
-                    return f"{parts[0]}/{parts[1]}"
-            if "/" in repo_input:
-                return repo_input
-            if user:
-                return f"{user}/{repo_input}"
-            return repo_input
-
-        if not st.session_state.github_connected:
-            gh_user       = st.text_input("Usuario GitHub", placeholder="cbastianM")
-            gh_token      = st.text_input("Personal Access Token", type="password", help="Token con permisos 'repo'.")
-            gh_repo_input = st.text_input("Repositorio (nombre o link)", placeholder="structural-models")
-
-            if st.button("Conectar", use_container_width=True, type="primary"):
-                if gh_token and gh_repo_input:
-                    repo_full = parse_repo_input(gh_user, gh_repo_input)
-                    try:
-                        from github_vcs import GitHubVCS
-                        vcs  = GitHubVCS(gh_token, repo_full)
-                        info = vcs.get_repo_info()
-                        st.session_state.vcs              = vcs
-                        st.session_state.github_connected = True
-                        st.session_state.gh_repo_name     = repo_full
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+    # Create new project
+    with st.expander("➕ Nuevo proyecto", expanded=not projects):
+        new_project_name = st.text_input(
+            "Nombre del proyecto",
+            placeholder="Edificio-Residencial-5P",
+            key="new_project_name",
+        )
+        if st.button("Crear proyecto", use_container_width=True, type="primary", key="btn_create_project"):
+            if new_project_name:
+                if create_project(new_project_name):
+                    st.success(f"Proyecto '{new_project_name}' creado.")
+                    st.rerun()
                 else:
-                    st.warning("Ingresa token y repositorio.")
-        else:
-            vcs  = st.session_state.vcs
-            info = vcs.get_repo_info()
-            st.success(f"📦 {info['name']}")
-            st.caption(f"{'🔒 Privado' if info['private'] else '🌐 Público'} · {info.get('default_branch', 'main')}")
-            if st.button("Desconectar / Cambiar repo", use_container_width=True):
-                st.session_state.github_connected = False
-                st.session_state.vcs              = None
-                st.session_state.models_cache     = {}
-                st.rerun()
+                    st.error("Nombre inválido.")
+            else:
+                st.warning("Ingresa un nombre.")
 
+    # Upload models to selected project
+    if selected_project:
+        st.markdown("---")
+        st.markdown("#### 📤 Subir modelos")
+        uploaded_files = st.file_uploader(
+            f"Subir a **{selected_project}**",
+            type=["json", "jsaf"],
+            accept_multiple_files=True,
+            key="model_uploader",
+            help="Archivos JSON/JSAF con modelos estructurales. Usa prefijos v01_, v02_ para orden.",
+        )
+        if uploaded_files:
+            for uf in uploaded_files:
+                save_uploaded_model(selected_project, uf)
+            st.success(f"{len(uploaded_files)} archivo(s) guardado(s) en {selected_project}/")
+            st.rerun()
+
+    # AI Key
     st.markdown("---")
     st.markdown("#### 🤖 API Key (IA)")
-    api_key = st.text_input("Anthropic API Key", type="password", help="Para el asistente de IA. Opcional.")
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  MODE: LOCAL UPLOAD
-# ═════════════════════════════════════════════════════════════════════════════
-
-if mode == "📁 Local (upload)":
-
-    uploaded_files = st.file_uploader(
-        "Sube tus archivos JSON (modelos estructurales)",
-        type=["json"],
-        accept_multiple_files=True,
-        help="Usa prefijos como v01_, v02_ para ordenarlos automáticamente.",
+    api_key = st.text_input(
+        "Anthropic API Key",
+        type="password",
+        help="Para el asistente de IA. Opcional.",
     )
 
-    if uploaded_files:
-        sorted_files = sorted(uploaded_files, key=lambda f: f.name)
 
+# ═════════════════════════════════════════════════════════════════════════════
+#  MAIN CONTENT
+# ═════════════════════════════════════════════════════════════════════════════
+
+if not selected_project:
+    st.markdown("""
+    <div style="text-align: center; padding: 80px 20px;">
+        <div style="font-size: 4rem; margin-bottom: 16px;">📂</div>
+        <h2 style="color: #e2e8f0; font-family: 'JetBrains Mono', monospace;">
+            Crea o selecciona un proyecto
+        </h2>
+        <p style="color: #64748b; max-width: 500px; margin: 0 auto;">
+            Usa la barra lateral para crear un nuevo proyecto o seleccionar uno existente.
+            Cada proyecto es una carpeta donde se almacenan los modelos estructurales.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    models = get_project_models(selected_project)
+
+    if not models:
+        st.markdown(f"""
+        <div style="text-align: center; padding: 60px 20px;">
+            <div style="font-size: 3rem; margin-bottom: 12px;">📄</div>
+            <h3 style="color: #e2e8f0; font-family: 'JetBrains Mono', monospace;">
+                Proyecto: {selected_project}
+            </h3>
+            <p style="color: #64748b;">
+                No hay modelos aún. Sube archivos JSON/JSAF desde la barra lateral.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        # ── Load all models (cached) ────────────────────────────────────
         versions = []
-        for f in sorted_files:
-            parsed, raw = load_and_parse(f, f.name)
+        for m in models:
+            parsed, raw_or_err = load_project_model(m)
             if parsed:
-                versions.append({"name": f.name.replace(".json", ""), "parsed": parsed, "raw": raw})
+                versions.append({
+                    "name": m["name"],
+                    "filename": m["filename"],
+                    "parsed": parsed,
+                    "raw": raw_or_err,
+                    "size_kb": m["size_kb"],
+                    "modified": m["modified"],
+                })
+            else:
+                st.warning(f"Error al parsear {m['filename']}: {raw_or_err}")
 
-        if len(versions) >= 2:
+        if len(versions) < 2:
+            with st.expander(f"📄 Modelos en **{selected_project}** ({len(versions)})", expanded=True):
+                for v in versions:
+                    p = v["parsed"]
+                    st.caption(
+                        f"**{v['name']}** — {len(p['nodes'])} nodos · {len(p['bars'])} barras · "
+                        f"{len(p['surfaces'])} superficies · {v['size_kb']} KB"
+                    )
+            st.info("Sube al menos 2 modelos para comparar versiones.")
+        else:
             version_names = [v["name"] for v in versions]
 
-            with st.expander(f"📄 Archivos cargados ({len(versions)})", expanded=False):
+            # ── File info ────────────────────────────────────────────────
+            with st.expander(f"📄 Modelos en **{selected_project}** ({len(versions)})", expanded=False):
                 for v in versions:
-                    p      = v["parsed"]
+                    p = v["parsed"]
                     branch = st.session_state.local_branch_assignments.get(v["name"], "main")
                     st.caption(
                         f"**{v['name']}** — {len(p['nodes'])} nodos · {len(p['bars'])} barras · "
-                        f"{len(p['surfaces'])} superficies · rama: `{branch}`"
+                        f"{len(p['surfaces'])} superficies · {v['size_kb']} KB · rama: `{branch}`"
                     )
 
+            # ── Branches ─────────────────────────────────────────────────
             with st.expander("🌿 Ramas", expanded=True):
                 for vn in version_names:
                     if vn not in st.session_state.local_branch_assignments:
@@ -680,7 +588,7 @@ if mode == "📁 Local (upload)":
                 st.markdown("**Asignar versiones a ramas:**")
                 assign_cols = st.columns(min(len(version_names), 4))
                 for i, vn in enumerate(version_names):
-                    col            = assign_cols[i % len(assign_cols)]
+                    col = assign_cols[i % len(assign_cols)]
                     current_branch = st.session_state.local_branch_assignments.get(vn, "main")
                     with col:
                         new_branch = st.selectbox(
@@ -690,6 +598,7 @@ if mode == "📁 Local (upload)":
                         )
                         st.session_state.local_branch_assignments[vn] = new_branch
 
+            # ── Version selectors + Branch graph ─────────────────────────
             st.markdown("---")
             col1, col2 = st.columns(2)
             with col1:
@@ -707,15 +616,16 @@ if mode == "📁 Local (upload)":
             if svg_html:
                 st.markdown(svg_html, unsafe_allow_html=True)
 
+            # ── Diff ─────────────────────────────────────────────────────
             if head_idx != compare_idx:
-                head    = versions[head_idx]
+                head = versions[head_idx]
                 compare = versions[compare_idx]
 
-                diff        = compute_full_diff(compare["parsed"], head["parsed"])
-                summary     = build_summary(diff)
+                diff = compute_full_diff(compare["parsed"], head["parsed"])
+                summary = build_summary(diff)
                 report_text = diff_to_report_text(diff, head["name"], compare["name"])
 
-                st.session_state.current_diff        = diff
+                st.session_state.current_diff = diff
                 st.session_state.current_report_text = report_text
 
                 st.markdown("---")
@@ -733,139 +643,3 @@ if mode == "📁 Local (upload)":
                     st.caption(f"{summary['total']} cambios totales")
             else:
                 st.warning("Selecciona dos versiones diferentes para comparar.")
-
-        elif len(versions) == 1:
-            st.info("Sube al menos 2 archivos para comparar versiones.")
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  MODE: GITHUB
-# ═════════════════════════════════════════════════════════════════════════════
-
-elif mode == "🐙 GitHub":
-
-    if not st.session_state.github_connected:
-        st.markdown("""
-        <div style="text-align: center; padding: 80px 20px;">
-            <div style="font-size: 4rem; margin-bottom: 16px;">🐙</div>
-            <h2 style="color: #e2e8f0; font-family: 'JetBrains Mono', monospace;">
-                Conecta tu repositorio
-            </h2>
-            <p style="color: #64748b; max-width: 500px; margin: 0 auto;">
-                Configura tu usuario, token y repositorio en la barra lateral
-                para comenzar a gestionar versiones de tus modelos estructurales.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    else:
-        vcs          = st.session_state.vcs
-        branches     = vcs.list_branches()
-        repo_info    = vcs.get_repo_info()
-        default_branch = repo_info.get("default_branch", "main")
-
-        # Ordenar: rama default primero, luego el resto alfabéticamente
-        branch_names = sorted(
-            [b["name"] for b in branches],
-            key=lambda n: (0 if n == default_branch else 1, n)
-        )
-
-        # Solo archivos nativos por rama (sin duplicados heredados)
-        all_files = get_branch_native_files(vcs, branch_names, default_branch)
-
-        with st.expander(
-            f"📄 Modelos en repositorio ({len(all_files)} archivos propios en {len(branch_names)} ramas)",
-            expanded=False,
-        ):
-            for bname in branch_names:
-                bf = [f for f in all_files if f["branch"] == bname]
-                if bf:
-                    st.markdown(f"**`{bname}`** — {len(bf)} modelo(s) propios")
-                    for f in bf:
-                        author_str = f"  ·  {f['author']}" if f["author"] else ""
-                        st.caption(f"   📄 {f['name']} ({f['size_kb']} KB){author_str}")
-                else:
-                    st.markdown(f"**`{bname}`** — sin modelos nuevos (solo hereda de rama base)")
-
-        if not all_files:
-            st.info("No hay modelos JSON en el repositorio. Asegúrate de que los archivos estén en la carpeta `models/`.")
-        else:
-            file_labels = [f["short_label"] for f in all_files]
-
-            col_sel, col_graph = st.columns([1, 2])
-            with col_sel:
-                head_idx = st.selectbox(
-                    "🔵 HEAD (versión actual)", range(len(all_files)),
-                    index=min(len(all_files) - 1, 1) if len(all_files) > 1 else 0,
-                    format_func=lambda i: file_labels[i], key="gh_head",
-                )
-                compare_idx = st.selectbox(
-                    "🟣 Comparar con", range(len(all_files)),
-                    index=0, format_func=lambda i: file_labels[i], key="gh_compare",
-                )
-            with col_graph:
-                svg_html = render_github_branch_graph(all_files, branch_names, head_idx, compare_idx)
-                if svg_html:
-                    st.markdown(svg_html, unsafe_allow_html=True)
-
-            head_file    = all_files[head_idx]
-            compare_file = all_files[compare_idx]
-
-            if head_file["label"] == compare_file["label"]:
-                st.warning("Selecciona dos archivos diferentes para comparar.")
-            else:
-                hck = head_file["label"]
-                cck = compare_file["label"]
-
-                if hck not in st.session_state.models_cache:
-                    with st.spinner(f"Descargando {hck}..."):
-                        data = vcs.get_model(head_file["name"], head_file["branch"])
-                        if data:
-                            st.session_state.models_cache[hck] = data
-
-                if cck not in st.session_state.models_cache:
-                    with st.spinner(f"Descargando {cck}..."):
-                        data = vcs.get_model(compare_file["name"], compare_file["branch"])
-                        if data:
-                            st.session_state.models_cache[cck] = data
-
-                head_raw    = st.session_state.models_cache.get(hck)
-                compare_raw = st.session_state.models_cache.get(cck)
-
-                if head_raw and compare_raw:
-                    head_parsed    = parse_model(head_raw)
-                    compare_parsed = parse_model(compare_raw)
-
-                    diff        = compute_full_diff(compare_parsed, head_parsed)
-                    summary     = build_summary(diff)
-                    report_text = diff_to_report_text(diff, hck, cck)
-
-                    st.session_state.current_diff        = diff
-                    st.session_state.current_report_text = report_text
-
-                    st.markdown("---")
-                    render_diff_view(diff, summary, head_parsed, compare_parsed, hck, cck, api_key)
-
-                    changelog = build_changelog_json(diff, hck, cck)
-                    with st.sidebar:
-                        st.markdown("---")
-                        st.markdown("#### 📥 Changelog")
-                        st.download_button(
-                            "Descargar changelog JSON",
-                            json.dumps(changelog, indent=2, ensure_ascii=False),
-                            "changelog.json", "application/json", use_container_width=True,
-                        )
-                        st.caption(f"{summary['total']} cambios totales")
-                else:
-                    st.error("Error al descargar los modelos del repositorio.")
-
-        if branch_names:
-            with st.expander("📜 Historial de commits", expanded=False):
-                hist_branch = st.selectbox("Rama", branch_names, key="hist_branch")
-                commits     = vcs.get_commit_history(hist_branch, max_commits=20)
-                for c in commits:
-                    st.markdown(
-                        f"**`{c['sha']}`** — {c['message']}  \n"
-                        f"<small>{c['author']} · {c['date'][:10]}</small>",
-                        unsafe_allow_html=True,
-                    )
