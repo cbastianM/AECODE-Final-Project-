@@ -353,26 +353,11 @@ def generate_local_summary(diff, summary, head_name, compare_name):
         s = summary[key]
         if s["total_changes"] == 0:
             continue
-        lines.append(f"**{cat_name}:**")
-        data = diff[key]
-        if data.get("added"):
-            items = list(data["added"].values())
-            labels_l = [item.get("label", item.get("name", "?")) for item in items]
-            lines.append(f"- Agregados ({len(items)}): {', '.join(labels_l[:10])}" + (" ..." if len(labels_l) > 10 else ""))
-        if data.get("removed"):
-            items = list(data["removed"].values())
-            labels_l = [item.get("label", item.get("name", "?")) for item in items]
-            lines.append(f"- Eliminados ({len(items)}): {', '.join(labels_l[:10])}" + (" ..." if len(labels_l) > 10 else ""))
-        if data.get("modified"):
-            items = list(data["modified"].values())
-            for item in items[:5]:
-                label = item.get("label", item.get("name", "?"))
-                changes = item.get("_changes", {})
-                change_list = [f"`{pk}`: {cv['old']} → {cv['new']}" for pk, cv in list(changes.items())[:3]]
-                lines.append(f"- Modificado {label}: {', '.join(change_list)}")
-            if len(items) > 5:
-                lines.append(f"- ... y {len(items) - 5} más")
-        lines.append("")
+        parts = []
+        if s["added"]:    parts.append(f"+{s['added']} agregados")
+        if s["removed"]:  parts.append(f"-{s['removed']} eliminados")
+        if s["modified"]: parts.append(f"~{s['modified']} modificados")
+        lines.append(f"- **{cat_name}**: {', '.join(parts)}")
     return "\n".join(lines)
 
 
@@ -584,10 +569,23 @@ if not projects:
 projects/
 └── Mi-Proyecto/
     ├── main/
-    │   ├── V0_Base.json
-    │   └── V1_Ampliacion.json
-    └── feature-postensado/
-        └── V2_Alternativa.json</pre>
+    │   ├── V1_Modelo-Base.json
+    │   ├── V2_Ampliacion-3er-Piso.json
+    │   └── V3_Cambio-Secciones.json
+    │
+    ├── feature-postensado/
+    │   ├── V4_V2_Losa-Postensada.json      ← fork de V2
+    │   └── V5_V2_Losa-Post-Refuerzo.json   ← fork de V2
+    │
+    └── alternativa-muros/
+        └── V6_V3_Muros-Cortante.json       ← fork de V3</pre>
+        <div style="margin-top: 16px; text-align: left; display: inline-block;">
+            <p style="color: #94a3b8; font-size: 0.8rem; font-family: 'JetBrains Mono', monospace; margin: 0;">
+                <span style="color: #06b6d4;">main/</span> → Evolución lineal: V1_, V2_, V3_...<br>
+                <span style="color: #f59e0b;">ramas/</span> → Alternativas: V4_<span style="color:#6366f1;">V2</span>_Nombre = fork desde V2 de main<br>
+                <span style="color: #64748b;">Los archivos se suben desde el plugin de Robot</span>
+            </p>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -602,8 +600,9 @@ elif not branches:
             Proyecto: {selected_project}
         </h3>
         <p style="color: #64748b;">
-            No se detectaron ramas (subcarpetas). Los modelos deben estar organizados
-            en subcarpetas como <code>main/</code>, <code>feature-xyz/</code>, etc.
+            No se detectaron ramas (subcarpetas).<br>
+            Estructura esperada: <code>projects/{selected_project}/main/V1_Nombre.json</code><br>
+            Para ramas alternativas: <code>projects/{selected_project}/feature-xyz/V2_V1_Nombre.json</code>
         </p>
     </div>
     """, unsafe_allow_html=True)
