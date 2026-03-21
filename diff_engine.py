@@ -127,6 +127,7 @@ def compute_full_diff(old_model: dict, new_model: dict) -> dict:
         "nodes": _diff_category(old_model["nodes"], new_model["nodes"], prop_key=None),
         "bars": _diff_category(old_model["bars"], new_model["bars"]),
         "surfaces": _diff_category(old_model["surfaces"], new_model["surfaces"]),
+        "openings": _diff_category(old_model.get("openings", {}), new_model.get("openings", {})),
         "materials": _diff_category(old_model["materials"], new_model["materials"]),
         "sections": _diff_category(old_model["sections"], new_model["sections"]),
     }
@@ -136,7 +137,7 @@ def compute_full_diff(old_model: dict, new_model: dict) -> dict:
 
 def build_summary(diff: dict) -> dict:
     summary = {"total": 0}
-    for key in ["nodes", "bars", "surfaces", "materials", "sections"]:
+    for key in ["nodes", "bars", "surfaces", "openings", "materials", "sections"]:
         d = diff[key]
         a, r, m = len(d["added"]), len(d["removed"]), len(d["modified"])
         total = a + r + m
@@ -147,7 +148,7 @@ def build_summary(diff: dict) -> dict:
 
 def diff_to_report_text(diff: dict, head_name: str, compare_name: str) -> str:
     lines = [f"Structural Diff Report: {compare_name} → {head_name}", f"Generated: {datetime.now().isoformat()}", "=" * 60, ""]
-    category_names = {"nodes": "Nodes", "bars": "Bars", "surfaces": "Surfaces", "materials": "Materials", "sections": "Sections"}
+    category_names = {"nodes": "Nodes", "bars": "Bars", "surfaces": "Surfaces", "openings": "Openings", "materials": "Materials", "sections": "Sections"}
     for key, cat_name in category_names.items():
         data = diff[key]
         a, r, m = len(data["added"]), len(data["removed"]), len(data["modified"])
@@ -180,7 +181,7 @@ def build_changelog_json(diff: dict, head_name: str, compare_name: str) -> dict:
         "compare": compare_name,
         "categories": {},
     }
-    for key in ["nodes", "bars", "surfaces", "materials", "sections"]:
+    for key in ["nodes", "bars", "surfaces", "openings", "materials", "sections"]:
         data = diff[key]
         cat = {}
         if data["added"]:
