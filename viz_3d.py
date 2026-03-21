@@ -200,22 +200,49 @@ def _triangulate_surface(coords, openings_3d=None):
     Triangulate a surface polygon.
     - 3-4 nodes without openings: fast fan triangulation
     - 5+ nodes or with openings: ear-clipping (handles concave L-shaped floors)
-    Deduplicates consecutive identical vertices before triangulating.
+    Cleans degenerate vertices: consecutive duplicates and spikes (A→B→A).
     """
     if len(coords) < 3:
         return []
 
-    # Remove consecutive duplicate points (Robot sometimes exports these)
+    # Step 1: Remove consecutive duplicates
     clean = [coords[0]]
-    idx_map = [0]  # maps clean index → original index
+    idx_map = [0]
     for i in range(1, len(coords)):
         if coords[i] != coords[i - 1]:
             clean.append(coords[i])
             idx_map.append(i)
-    # Also check last == first wrap-around
     if len(clean) > 1 and clean[-1] == clean[0]:
         clean.pop()
         idx_map.pop()
+
+    # Step 2: Remove spikes — A→B→A pattern where coords[i] == coords[i+2]
+    changed = True
+    while changed and len(clean) > 3:
+        changed = False
+        for i in range(len(clean)):
+            n = len(clean)
+            j = (i + 2) % n
+            if clean[i] == clean[j]:
+                # Remove the spike tip at i+1
+                tip = (i + 1) % n
+                clean.pop(tip)
+                idx_map.pop(tip)
+                changed = True
+                break
+
+    # Step 3: Remove consecutive duplicates again (spike removal may create new ones)
+    deduped = [clean[0]]
+    deduped_idx = [idx_map[0]]
+    for i in range(1, len(clean)):
+        if clean[i] != clean[i - 1]:
+            deduped.append(clean[i])
+            deduped_idx.append(idx_map[i])
+    if len(deduped) > 1 and deduped[-1] == deduped[0]:
+        deduped.pop()
+        deduped_idx.pop()
+    clean = deduped
+    idx_map = deduped_idx
 
     if len(clean) < 3:
         return []
