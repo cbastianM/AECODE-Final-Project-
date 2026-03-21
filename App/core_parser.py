@@ -50,12 +50,10 @@ def material_uid(mat: dict) -> str:
 
 
 def section_uid(sec: dict) -> str:
-    name = sec.get("Name", "unknown")
-    return f"SEC_{name}"
+    return f"SEC_{sec.get('Name', 'unknown')}"
 
 
 def _resolve_name(item_list: list, ref_id, fallback="?") -> str:
-    """Resolve an Id reference to a Name from a list of items."""
     if ref_id is None:
         return fallback
     ref_str = str(ref_id)
@@ -66,47 +64,44 @@ def _resolve_name(item_list: list, ref_id, fallback="?") -> str:
 
 
 def parse_model(data: dict) -> dict:
-    """
-    Parse a structural model JSON into normalized structures with geometry-based UIDs.
-    Returns dict with keys: nodes, bars, surfaces, materials, sections, id_to_uid
-    """
     raw_materials = data.get("Materials", [])
     raw_sections = data.get("CrossSections", [])
 
     # ── Materials ────────────────────────────────────────────────────────
     materials = {}
     mat_id_to_uid = {}
+    mat_id_to_name = {}
     for m in raw_materials:
         uid = material_uid(m)
-        mat_id_to_uid[str(m.get("Id", ""))] = uid
+        orig_id = str(m.get("Id", ""))
+        mat_id_to_uid[orig_id] = uid
+        mat_id_to_name[orig_id] = m.get("Name", orig_id)
         props = {k: v for k, v in m.items() if k not in IGNORE_FIELDS_MATERIAL and v is not None}
         materials[uid] = {
-            "uid": uid,
+            "uid": uid, "original_id": orig_id,
             "name": m.get("Name", "?"),
-            "original_id": str(m.get("Id", "")),
             "properties": props,
         }
 
-    # ── Cross Sections ──────────────────────────────────────────────────
+    # ── Cross Sections ───────────────────────────────────────────────────
     sections = {}
     sec_id_to_uid = {}
+    sec_id_to_name = {}
     for s in raw_sections:
         uid = section_uid(s)
-        sec_id_to_uid[str(s.get("Id", ""))] = uid
+        orig_id = str(s.get("Id", ""))
+        sec_id_to_uid[orig_id] = uid
+        sec_id_to_name[orig_id] = s.get("Name", orig_id)
+        mat_names = [mat_id_to_name.get(mid, mid) for mid in (s.get("Materials") or [])]
         props = {k: v for k, v in s.items() if k not in IGNORE_FIELDS_SECTION and v is not None}
-        # Resolve material references inside section
-        if "Materials" in s and isinstance(s["Materials"], list):
-            props["_MaterialNames"] = [
-                _resolve_name(raw_materials, mid) for mid in s["Materials"]
-            ]
+        props["_MaterialNames"] = mat_names
         sections[uid] = {
-            "uid": uid,
+            "uid": uid, "original_id": orig_id,
             "name": s.get("Name", "?"),
-            "original_id": str(s.get("Id", "")),
             "properties": props,
         }
 
-    # ── Nodes ───────────────────────────────────────────────────────────
+    # ── Nodes ────────────────────────────────────────────────────────────
     raw_nodes = data.get("PointConnections", [])
     id_to_uid = {}
     nodes = {}
@@ -120,59 +115,54 @@ def parse_model(data: dict) -> dict:
             "name": n.get("Name", orig_id),
             "X": x, "Y": y, "Z": z,
         }
-
-    # Assign sequential labels
     for i, uid in enumerate(sorted(nodes.keys()), start=1):
         nodes[uid]["label"] = f"N_{i:03d}"
 
-    # ── Bars ────────────────────────────────────────────────────────────
+    # ── Bars ─────────────────────────────────────────────────────────────
     raw_bars = data.get("CurveMembers", [])
     bars = {}
     for b in raw_bars:
-        conn = b.get("Nodes", [])
-        if len(conn) < 2:
+        node_ids = b.get("Nodes", [])
+        if len(node_ids) < 2:
             continue
-        ni_uid = id_to_uid.get(str(conn[0]), str(conn[0]))
-        nj_uid = id_to_uid.get(str(conn[1]), str(conn[1]))
-        uid = bar_uid(ni_uid, nj_uid)
-        orig_id = str(b.get("Id", ""))
+        uid_i = id_to_uid.get(str(node_ids[0]))
+        uid_j = id_to_uid.get(str(node_ids[-1]))
+        if not uid_i or not uid_j:
+            continue
+        uid = bar_uid(uid_i, uid_j)
+        sec_name = _resolve_name(raw_sections, b.get("CrossSection"), "?")
         props = {k: v for k, v in b.items() if k not in IGNORE_FIELDS_BAR and v is not None}
-        # Resolve cross section name
-        cs_id = b.get("CrossSection")
-        if cs_id is not None:
-            props["_CrossSectionName"] = _resolve_name(raw_sections, cs_id)
+        props["_CrossSectionName"] = sec_name
+        props["_NodeUIDs"] = [uid_i, uid_j]
         bars[uid] = {
-            "uid": uid, "original_id": orig_id,
-            "name": b.get("Name", orig_id),
-            "node_i_uid": ni_uid, "node_j_uid": nj_uid,
+            "uid": uid, "original_id": str(b.get("Id", "")),
+            "name": b.get("Name", "?"),
+            "node_i": uid_i, "node_j": uid_j,
             "properties": props,
         }
-
     for i, uid in enumerate(sorted(bars.keys()), start=1):
         bars[uid]["label"] = f"B_{i:03d}"
-        bars[uid]["node_i_label"] = nodes.get(bars[uid]["node_i_uid"], {}).get("label", "?")
-        bars[uid]["node_j_label"] = nodes.get(bars[uid]["node_j_uid"], {}).get("label", "?")
 
-    # ── Surfaces ────────────────────────────────────────────────────────
+    # ── Surfaces ─────────────────────────────────────────────────────────
     raw_surfaces = data.get("SurfaceMembers", [])
     surfaces = {}
     for s in raw_surfaces:
-        s_nodes = s.get("Nodes", [])
-        s_node_uids = [id_to_uid.get(str(nid), str(nid)) for nid in s_nodes]
+        s_node_ids = s.get("Nodes", [])
+        s_node_uids = [id_to_uid.get(str(nid)) for nid in s_node_ids]
+        s_node_uids = [u for u in s_node_uids if u]
+        if len(s_node_uids) < 3:
+            continue
         uid = surface_uid(s_node_uids)
-        orig_id = str(s.get("Id", ""))
+        mat_name = _resolve_name(raw_materials, s.get("Material"), "?")
         props = {k: v for k, v in s.items() if k not in IGNORE_FIELDS_SURFACE and v is not None}
-        if "Materials" in s and isinstance(s["Materials"], list):
-            props["_MaterialNames"] = [
-                _resolve_name(raw_materials, mid) for mid in s["Materials"]
-            ]
+        props["_MaterialName"] = mat_name
+        props["_NodeUIDs"] = s_node_uids
         surfaces[uid] = {
-            "uid": uid, "original_id": orig_id,
-            "name": s.get("Name", orig_id),
+            "uid": uid, "original_id": str(s.get("Id", "")),
+            "name": s.get("Name", "?"),
             "node_uids": s_node_uids,
             "properties": props,
         }
-
     for i, uid in enumerate(sorted(surfaces.keys()), start=1):
         surfaces[uid]["label"] = f"S_{i:03d}"
 
