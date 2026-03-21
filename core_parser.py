@@ -26,6 +26,13 @@ IGNORE_FIELDS_SURFACE = {
 IGNORE_FIELDS_MATERIAL = {"Name", "Id", "name", "id"}
 IGNORE_FIELDS_SECTION = {"Name", "Id", "name", "id", "ExpandedMaterials", "Materials"}
 
+IGNORE_FIELDS_OPENING = {
+    "Name", "Id", "name", "id",
+    "ExpandedNodes",
+    "Nodes",       # raw Ids — replaced by _NodeUIDs
+    "Surface",     # raw Id — replaced by _SurfaceUID and _SurfaceName
+}
+
 
 def rc(val) -> float:
     return round(float(val), COORD_PRECISION)
@@ -45,6 +52,13 @@ def surface_uid(node_uids: list) -> str:
     key = "|".join(sorted_uids)
     short_hash = hashlib.md5(key.encode()).hexdigest()[:8]
     return f"S_{short_hash}"
+
+
+def opening_uid(node_uids: list) -> str:
+    sorted_uids = sorted(node_uids)
+    key = "|".join(sorted_uids)
+    short_hash = hashlib.md5(key.encode()).hexdigest()[:8]
+    return f"O_{short_hash}"
 
 
 def material_uid(mat: dict) -> str:
@@ -168,10 +182,56 @@ def parse_model(data: dict) -> dict:
     for i, uid in enumerate(sorted(surfaces.keys()), start=1):
         surfaces[uid]["label"] = f"S_{i:03d}"
 
+    # Build surface Id → UID map for opening references
+    surface_id_to_uid = {}
+    surface_id_to_name = {}
+    for s in raw_surfaces:
+        s_id = str(s.get("Id", ""))
+        s_node_ids = s.get("Nodes", [])
+        s_node_uids = [id_to_uid.get(str(nid)) for nid in s_node_ids]
+        s_node_uids = [u for u in s_node_uids if u]
+        if len(s_node_uids) >= 3:
+            s_uid = surface_uid(s_node_uids)
+            surface_id_to_uid[s_id] = s_uid
+            surface_id_to_name[s_id] = s.get("Name", s_id)
+
+    # ── Openings ─────────────────────────────────────────────────────────
+    raw_openings = data.get("SurfaceMemberOpenings", [])
+    openings = {}
+    for o in raw_openings:
+        o_node_ids = o.get("Nodes", [])
+        o_node_uids = [id_to_uid.get(str(nid)) for nid in o_node_ids]
+        o_node_uids = [u for u in o_node_uids if u]
+        if len(o_node_uids) < 3:
+            continue
+        uid = opening_uid(o_node_uids)
+        # Resolve parent surface reference
+        surf_id = str(o.get("Surface", ""))
+        surf_uid = surface_id_to_uid.get(surf_id, "?")
+        surf_name = surface_id_to_name.get(surf_id, surf_id)
+        # Find surface label
+        surf_label = surfaces.get(surf_uid, {}).get("label", surf_name)
+
+        props = {k: v for k, v in o.items() if k not in IGNORE_FIELDS_OPENING and v is not None}
+        props["_NodeUIDs"] = o_node_uids
+        props["_SurfaceUID"] = surf_uid
+        props["_SurfaceName"] = surf_name
+        props["_SurfaceLabel"] = surf_label
+        openings[uid] = {
+            "uid": uid, "original_id": str(o.get("Id", "")),
+            "name": o.get("Name", "?"),
+            "node_uids": o_node_uids,
+            "surface_uid": surf_uid,
+            "properties": props,
+        }
+    for i, uid in enumerate(sorted(openings.keys()), start=1):
+        openings[uid]["label"] = f"O_{i:03d}"
+
     return {
         "nodes": nodes,
         "bars": bars,
         "surfaces": surfaces,
+        "openings": openings,
         "materials": materials,
         "sections": sections,
         "id_to_uid": id_to_uid,
