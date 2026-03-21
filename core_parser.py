@@ -11,10 +11,13 @@ IGNORE_FIELDS_BAR = {
     "Name", "Id", "name", "id",
     "ExpandedCrossSection", "ExpandedResults", "ExpandedNodes",
     "Nodes", "StoreyID",
-    "CrossSection",   # raw Id — replaced by _CrossSectionName
-    "StoreyNumber",   # metadata
-    "Length",         # computed field
-    "IsGrouped",     # metadata
+    "CrossSection",    # raw Id — replaced by _CrossSectionName
+    "StoreyNumber",    # metadata
+    "Length",          # computed field
+    "IsGrouped",       # metadata
+    "Segment",         # metadata
+    "LCS", "LCSRotation", "LCSX", "LCSY", "LCSZ",  # local coordinate system
+    "SystemLine", "AnalysisBehavior",                 # analysis metadata
 }
 
 IGNORE_FIELDS_SURFACE = {
@@ -23,10 +26,13 @@ IGNORE_FIELDS_SURFACE = {
     "ExpandedMeshResults", "ExpandedNodes",
     "Openings", "Regions", "Macro",
     "Nodes", "StoreyID", "InternalNodes",
-    "Material",      # raw Id (single) — replaced by _MaterialName
-    "Materials",     # raw Id list — replaced by _MaterialName
-    "StoreyNumber",  # metadata, not structural
-    "Area",          # computed field, not a design input
+    "Material",        # raw Id (single) — replaced by _MaterialName
+    "Materials",       # raw Id list — replaced by _MaterialName
+    "StoreyNumber",    # metadata
+    "Area",            # computed field
+    "LCS", "LCSRotation", "LCSX", "LCSY", "LCSZ",  # local coordinate system
+    "SystemPlane", "AnalyticBehavior",                # analysis metadata
+    "Edges",           # edge type flags — not a design property
 }
 
 IGNORE_FIELDS_MATERIAL = {"Name", "Id", "name", "id"}
