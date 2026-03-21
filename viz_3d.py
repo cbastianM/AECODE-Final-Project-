@@ -318,49 +318,53 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
                     zs.extend([ni["Z"], nj["Z"], None])
 
         if xs:
+            if status == "unchanged":
+                bar_color = "#334155"  # slate-700 tenue
+                bar_width = 1.5
+                bar_opacity = 0.4
+            else:
+                bar_color = STATUS_COLORS[status]
+                bar_width = 4
+                bar_opacity = 1.0
             fig.add_trace(go.Scatter3d(
                 x=xs, y=ys, z=zs, mode="lines",
-                line=dict(width=4 if status != "unchanged" else 2, color=color),
-                opacity=0.3 if status == "unchanged" else 1.0,
+                line=dict(width=bar_width, color=bar_color),
+                opacity=bar_opacity,
                 name=f"Barras {STATUS_LABELS[status]} ({len(items)})",
                 legendgroup=f"b_{status}",
             ))
 
     # ── Surfaces (separated by type: plates vs walls) ──────────────────
     SURFACE_TYPES = {
-        0: ("Losas", "rgba(100,180,255,{a})", "rgba(100,180,255,{ea})"),   # blue plates
-        1: ("Muros", "rgba(255,160,80,{a})", "rgba(255,160,80,{ea})"),     # orange walls
+        0: ("Losas", "#1e3a5f", "#2a5080"),   # soft dark blue
+        1: ("Muros", "#4a3228", "#6b4a3a"),    # soft dark brown
     }
-    DEFAULT_TYPE = ("Sup.", "rgba(150,150,150,{a})", "rgba(150,150,150,{ea})")
+    DEFAULT_TYPE = ("Sup.", "#2d3748", "#3d4a5c")
 
     for status in ["unchanged", "removed", "modified", "added"]:
         items = diff["surfaces"].get(status, {})
         if not items:
             continue
 
-        # Group items by surface type
         by_type = {}
         for uid, surf in items.items():
             stype = surf.get("properties", {}).get("Type", -1)
             by_type.setdefault(stype, {})[uid] = surf
 
-        # Determine opacity based on diff status
-        if status == "unchanged":
-            fill_a, edge_a = 0.55, 0.8
-        else:
-            fill_a, edge_a = 0.7, 0.9
-
-        # Override color: use status color for changed items, type color for unchanged
         for stype, type_items in by_type.items():
             type_info = SURFACE_TYPES.get(stype, DEFAULT_TYPE)
-            type_label, fill_tpl, edge_tpl = type_info
+            type_label, fill_unchanged, edge_unchanged = type_info
 
             if status == "unchanged":
-                fill_color = fill_tpl.format(a=fill_a)
-                edge_color = edge_tpl.format(ea=edge_a)
+                fill_color = fill_unchanged
+                edge_color = edge_unchanged
+                fill_a = 0.45
+                edge_a = 0.5
             else:
                 fill_color = STATUS_COLORS[status]
                 edge_color = STATUS_COLORS[status]
+                fill_a = 0.7
+                edge_a = 0.9
 
             mx = {"x": [], "y": [], "z": [], "i": [], "j": [], "k": []}
             edge_xs, edge_ys, edge_zs = [], [], []
@@ -477,18 +481,21 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
         items = diff["nodes"].get(status, {})
         if not items:
             continue
-        color = STATUS_COLORS[status]
+        if status == "unchanged":
+            node_color = "#475569"   # slate-600 tenue
+            node_size = 3
+            node_opacity = 0.25
+        else:
+            node_color = STATUS_COLORS[status]
+            node_size = 6
+            node_opacity = 1.0
         nodes_list = list(items.values())
         fig.add_trace(go.Scatter3d(
             x=[n["X"] for n in nodes_list],
             y=[n["Y"] for n in nodes_list],
             z=[n["Z"] for n in nodes_list],
             mode="markers",
-            marker=dict(
-                size=4 if status == "unchanged" else 6,
-                color=color,
-                opacity=0.3 if status == "unchanged" else 1.0,
-            ),
+            marker=dict(size=node_size, color=node_color, opacity=node_opacity),
             name=f"Nodos {STATUS_LABELS[status]} ({len(items)})",
             legendgroup=f"n_{status}",
             text=[f"{n.get('label', n['uid'])}<br>({n['X']}, {n['Y']}, {n['Z']})" for n in nodes_list],
