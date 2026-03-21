@@ -123,20 +123,13 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
                 showlegend=False,
             ))
 
-    # ── Openings ─────────────────────────────────────────────────────────
-    OPENING_COLORS = {
-        "added": "#4ade80",     # bright green
-        "removed": "#f87171",   # bright red
-        "modified": "#fbbf24",  # bright yellow
-        "unchanged": "#94a3b8", # gray
-    }
+    # ── Openings (dark purple overlay) ──────────────────────────────────
+    OPENING_COLOR = "#4c1d95"  # dark purple
     for status in ["unchanged", "removed", "modified", "added"]:
         items = diff.get("openings", {}).get(status, {})
         if not items:
             continue
-        color = OPENING_COLORS[status]
 
-        # Render each opening as a filled Mesh3d + wireframe border
         for uid, opening in items.items():
             props = opening.get("properties", opening)
             node_uids = props.get("_NodeUIDs", opening.get("node_uids", []))
@@ -152,7 +145,6 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
             ys = [c[1] for c in coords]
             zs = [c[2] for c in coords]
 
-            # Fan triangulation
             ii, jj, kk = [], [], []
             for t in range(1, len(coords) - 1):
                 ii.append(0)
@@ -163,42 +155,13 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
             fig.add_trace(go.Mesh3d(
                 x=xs, y=ys, z=zs,
                 i=ii, j=jj, k=kk,
-                color=color,
-                opacity=0.12 if status == "unchanged" else 0.5,
-                name=f"{label} ({STATUS_LABELS[status]})",
-                legendgroup=f"o_{status}",
-                showlegend=(uid == list(items.keys())[0]),
+                color=OPENING_COLOR,
+                opacity=0.85,
+                name=f"{label} — Abertura ({STATUS_LABELS[status]})",
+                legendgroup="openings",
+                showlegend=(uid == list(items.keys())[0] and status == "unchanged") or (status != "unchanged" and uid == list(items.keys())[0]),
                 hovertext=label,
                 hoverinfo="text",
-            ))
-
-        # Wireframe borders for all openings of this status
-        edge_xs, edge_ys, edge_zs = [], [], []
-        for uid, opening in items.items():
-            props = opening.get("properties", opening)
-            node_uids = props.get("_NodeUIDs", opening.get("node_uids", []))
-            coords = []
-            for nuid in node_uids:
-                n = all_nodes.get(nuid)
-                if n:
-                    coords.append((n["X"], n["Y"], n["Z"]))
-            if len(coords) < 3:
-                continue
-            for ci in range(len(coords)):
-                cj = (ci + 1) % len(coords)
-                edge_xs.extend([coords[ci][0], coords[cj][0], None])
-                edge_ys.extend([coords[ci][1], coords[cj][1], None])
-                edge_zs.extend([coords[ci][2], coords[cj][2], None])
-
-        if edge_xs:
-            fig.add_trace(go.Scatter3d(
-                x=edge_xs, y=edge_ys, z=edge_zs,
-                mode="lines",
-                line=dict(width=4 if status != "unchanged" else 2, color=color),
-                opacity=0.3 if status == "unchanged" else 0.9,
-                name=f"Aberturas bordes {STATUS_LABELS[status]} ({len(items)})",
-                legendgroup=f"o_{status}",
-                showlegend=False,
             ))
 
     # ── Nodes ────────────────────────────────────────────────────────────
