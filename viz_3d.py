@@ -299,64 +299,91 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
                 legendgroup=f"b_{status}",
             ))
 
-    # ── Surfaces ─────────────────────────────────────────────────────────
+    # ── Surfaces (separated by type: plates vs walls) ──────────────────
+    SURFACE_TYPES = {
+        0: ("Losas", "rgba(100,180,255,{a})", "rgba(100,180,255,{ea})"),   # blue plates
+        1: ("Muros", "rgba(255,160,80,{a})", "rgba(255,160,80,{ea})"),     # orange walls
+    }
+    DEFAULT_TYPE = ("Sup.", "rgba(150,150,150,{a})", "rgba(150,150,150,{ea})")
+
     for status in ["unchanged", "removed", "modified", "added"]:
         items = diff["surfaces"].get(status, {})
         if not items:
             continue
-        color = STATUS_COLORS[status]
-        opacity = 0.1 if status == "unchanged" else 0.4
 
-        mx = {"x": [], "y": [], "z": [], "i": [], "j": [], "k": []}
-        edge_xs, edge_ys, edge_zs = [], [], []
-
+        # Group items by surface type
+        by_type = {}
         for uid, surf in items.items():
-            node_uids = _get_surface_node_uids(surf)
-            coords = _get_node_coords(node_uids, all_nodes)
-            if len(coords) < 3:
-                continue
+            stype = surf.get("properties", {}).get("Type", -1)
+            by_type.setdefault(stype, {})[uid] = surf
 
-            surf_openings = opening_map.get(uid, None)
-            tris = _triangulate_surface(coords, surf_openings)
+        # Determine opacity based on diff status
+        if status == "unchanged":
+            fill_a, edge_a = 0.55, 0.8
+        else:
+            fill_a, edge_a = 0.7, 0.9
 
-            off = len(mx["x"])
-            for c in coords:
-                mx["x"].append(c[0])
-                mx["y"].append(c[1])
-                mx["z"].append(c[2])
-            for i0, i1, i2 in tris:
-                mx["i"].append(off + i0)
-                mx["j"].append(off + i1)
-                mx["k"].append(off + i2)
+        # Override color: use status color for changed items, type color for unchanged
+        for stype, type_items in by_type.items():
+            type_info = SURFACE_TYPES.get(stype, DEFAULT_TYPE)
+            type_label, fill_tpl, edge_tpl = type_info
 
-            # Wireframe: closed polygon border
-            for ci in range(len(coords)):
-                cj = (ci + 1) % len(coords)
-                edge_xs.extend([coords[ci][0], coords[cj][0], None])
-                edge_ys.extend([coords[ci][1], coords[cj][1], None])
-                edge_zs.extend([coords[ci][2], coords[cj][2], None])
+            if status == "unchanged":
+                fill_color = fill_tpl.format(a=fill_a)
+                edge_color = edge_tpl.format(ea=edge_a)
+            else:
+                fill_color = STATUS_COLORS[status]
+                edge_color = STATUS_COLORS[status]
 
-        if mx["x"]:
-            fig.add_trace(go.Mesh3d(
-                x=mx["x"], y=mx["y"], z=mx["z"],
-                i=mx["i"], j=mx["j"], k=mx["k"],
-                color=color, opacity=opacity,
-                flatshading=True,
-                lighting=dict(ambient=0.8, diffuse=0.2, specular=0.0),
-                name=f"Superficies {STATUS_LABELS[status]} ({len(items)})",
-                legendgroup=f"s_{status}",
-            ))
+            mx = {"x": [], "y": [], "z": [], "i": [], "j": [], "k": []}
+            edge_xs, edge_ys, edge_zs = [], [], []
 
-        if edge_xs:
-            fig.add_trace(go.Scatter3d(
-                x=edge_xs, y=edge_ys, z=edge_zs,
-                mode="lines",
-                line=dict(width=2 if status != "unchanged" else 1, color=color),
-                opacity=0.2 if status == "unchanged" else 0.6,
-                name=f"Bordes sup. {STATUS_LABELS[status]}",
-                legendgroup=f"s_{status}",
-                showlegend=False,
-            ))
+            for uid, surf in type_items.items():
+                node_uids = _get_surface_node_uids(surf)
+                coords = _get_node_coords(node_uids, all_nodes)
+                if len(coords) < 3:
+                    continue
+
+                # Full fill — no opening subtraction
+                tris = _triangulate_surface(coords)
+
+                off = len(mx["x"])
+                for c in coords:
+                    mx["x"].append(c[0])
+                    mx["y"].append(c[1])
+                    mx["z"].append(c[2])
+                for i0, i1, i2 in tris:
+                    mx["i"].append(off + i0)
+                    mx["j"].append(off + i1)
+                    mx["k"].append(off + i2)
+
+                for ci in range(len(coords)):
+                    cj = (ci + 1) % len(coords)
+                    edge_xs.extend([coords[ci][0], coords[cj][0], None])
+                    edge_ys.extend([coords[ci][1], coords[cj][1], None])
+                    edge_zs.extend([coords[ci][2], coords[cj][2], None])
+
+            if mx["x"]:
+                fig.add_trace(go.Mesh3d(
+                    x=mx["x"], y=mx["y"], z=mx["z"],
+                    i=mx["i"], j=mx["j"], k=mx["k"],
+                    color=fill_color, opacity=fill_a,
+                    flatshading=True,
+                    lighting=dict(ambient=0.8, diffuse=0.2, specular=0.0),
+                    name=f"{type_label} {STATUS_LABELS[status]} ({len(type_items)})",
+                    legendgroup=f"s_{stype}_{status}",
+                ))
+
+            if edge_xs:
+                fig.add_trace(go.Scatter3d(
+                    x=edge_xs, y=edge_ys, z=edge_zs,
+                    mode="lines",
+                    line=dict(width=2, color=edge_color),
+                    opacity=edge_a,
+                    name=f"Bordes {type_label} {STATUS_LABELS[status]}",
+                    legendgroup=f"s_{stype}_{status}",
+                    showlegend=False,
+                ))
 
     # ── Openings (dark purple overlay) ───────────────────────────────────
     has_openings = any(
