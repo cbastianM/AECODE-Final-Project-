@@ -528,7 +528,7 @@ with st.sidebar:
 
     if selected_project and branches:
         st.markdown("---")
-        st.markdown(f"#### 🌿 Ramas ({len(branches)})")
+        st.markdown(f"#### 🔀 Ramas ({len(branches)})")
         for b in branches:
             n_models = len(get_branch_models(selected_project, b))
             color = BRANCH_COLORS[branches.index(b) % len(BRANCH_COLORS)]
@@ -555,17 +555,24 @@ with st.sidebar:
 
 if not projects:
     st.markdown("""
-    <div style="text-align: center; padding: 80px 20px;">
+    <div style="text-align: center; padding: 40px 20px;">
         <div style="font-size: 4rem; margin-bottom: 16px;">📂</div>
         <h2 style="color: #e2e8f0; font-family: 'JetBrains Mono', monospace;">
             No se detectaron proyectos
         </h2>
-        <p style="color: #64748b; max-width: 520px; margin: 0 auto;">
-            Los proyectos y modelos se gestionan desde el plugin de Robot.<br>
-            La estructura esperada es:
+        <p style="color: #64748b;">
+            Los proyectos y modelos se gestionan desde el plugin de Robot.
         </p>
-        <pre style="color: #94a3b8; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;
-                    text-align: left; display: inline-block; margin-top: 12px;">
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.expander("📖 Instrucciones — Cómo organizar los proyectos", expanded=True):
+        st.markdown("""
+**1. Estructura de carpetas**
+
+Cada proyecto es una carpeta dentro de `projects/`. Las ramas son subcarpetas dentro del proyecto:
+
+```
 projects/
 └── Mi-Proyecto/
     ├── main/
@@ -574,20 +581,33 @@ projects/
     │   └── V3_Cambio-Secciones.json
     │
     ├── feature-postensado/
-    │   ├── V4_V2_Losa-Postensada.json      ← fork de V2
-    │   └── V5_V2_Losa-Post-Refuerzo.json   ← fork de V2
+    │   ├── V4_V2_Losa-Postensada.json
+    │   └── V5_V2_Losa-Post-Refuerzo.json
     │
     └── alternativa-muros/
-        └── V6_V3_Muros-Cortante.json       ← fork de V3</pre>
-        <div style="margin-top: 16px; text-align: left; display: inline-block;">
-            <p style="color: #94a3b8; font-size: 0.8rem; font-family: 'JetBrains Mono', monospace; margin: 0;">
-                <span style="color: #06b6d4;">main/</span> → Evolución lineal: V1_, V2_, V3_...<br>
-                <span style="color: #f59e0b;">ramas/</span> → Alternativas: V4_<span style="color:#6366f1;">V2</span>_Nombre = fork desde V2 de main<br>
-                <span style="color: #64748b;">Los archivos se suben desde el plugin de Robot</span>
-            </p>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+        └── V6_V3_Muros-Cortante.json
+```
+
+**2. Convención de nombres**
+
+| Ubicación | Formato | Ejemplo |
+|---|---|---|
+| `main/` | `V{n}_{nombre}.json` | `V1_Modelo-Base.json` |
+| Ramas | `V{n}_V{origen}_{nombre}.json` | `V4_V2_Losa-Postensada.json` |
+
+- El primer prefijo (`V4`) es el número de versión propio
+- El segundo prefijo (`V2`) indica **de qué versión de main se desprende** la rama
+- En `main/` no se usa doble prefijo — las versiones son secuenciales
+
+**3. Ejemplo de flujo**
+
+1. El ingeniero crea `V1_Modelo-Base.json` en `main/` desde Robot
+2. Hace cambios y exporta `V2_Ampliacion.json` en `main/`
+3. Quiere explorar postensado sin perder la línea principal → crea la carpeta `feature-postensado/` y exporta `V4_V2_Losa-Postensada.json` (fork desde V2)
+4. El diagrama de ramas mostrará la bifurcación desde V2
+5. Si la alternativa se aprueba, se integra como nueva versión en `main/`
+""")
+
 
 elif not selected_project:
     st.info("Selecciona un proyecto en la barra lateral.")
@@ -595,7 +615,7 @@ elif not selected_project:
 elif not branches:
     st.markdown(f"""
     <div style="text-align: center; padding: 60px 20px;">
-        <div style="font-size: 3rem; margin-bottom: 12px;">🌿</div>
+        <div style="font-size: 3rem; margin-bottom: 12px;">🔀</div>
         <h3 style="color: #e2e8f0; font-family: 'JetBrains Mono', monospace;">
             Proyecto: {selected_project}
         </h3>
@@ -663,7 +683,7 @@ else:
                             f"{len(p['surfaces'])} superficies · {len(p.get('openings', {}))} aberturas · {v['size_kb']} KB{fork_info}"
                         )
 
-        # ── Version selectors + Branch graph ─────────────────────────
+        # ── Version selectors ─────────────────────────────────────────
         st.markdown("---")
         col1, col2 = st.columns(2)
         with col1:
@@ -679,9 +699,11 @@ else:
                 format_func=lambda i: version_labels[i],
             )
 
-        svg_html = render_branch_graph_svg(all_versions, branches, head_idx, compare_idx)
-        if svg_html:
-            st.markdown(svg_html, unsafe_allow_html=True)
+        # ── Branch graph (collapsible) ───────────────────────────────
+        with st.expander("🔀 Diagrama de ramas", expanded=False):
+            svg_html = render_branch_graph_svg(all_versions, branches, head_idx, compare_idx)
+            if svg_html:
+                st.markdown(svg_html, unsafe_allow_html=True)
 
         # ── Diff ─────────────────────────────────────────────────────
         if head_idx != compare_idx:
