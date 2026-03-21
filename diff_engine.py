@@ -52,14 +52,86 @@ def _diff_category(old_items: dict, new_items: dict, prop_key: str = "properties
     return {"added": added, "removed": removed, "modified": modified, "unchanged": unchanged}
 
 
+def _compute_impact(diff: dict, new_model: dict) -> dict:
+    """
+    For each modified/added/removed material or section, find which
+    bars and surfaces reference it. Returns a dict:
+    {
+        "materials": { mat_uid: { "bars": [...], "surfaces": [...] } },
+        "sections":  { sec_uid: { "bars": [...] } },
+    }
+    """
+    impact = {"materials": {}, "sections": {}}
+
+    # Collect changed material/section names
+    changed_mats = set()
+    for status in ("added", "removed", "modified"):
+        for uid, item in diff["materials"].get(status, {}).items():
+            changed_mats.add(item.get("name", uid))
+
+    changed_secs = set()
+    for status in ("added", "removed", "modified"):
+        for uid, item in diff["sections"].get(status, {}).items():
+            changed_secs.add(item.get("name", uid))
+
+    if not changed_mats and not changed_secs:
+        return impact
+
+    # Scan all bars in NEW model for section references
+    for bar_uid, bar in new_model.get("bars", {}).items():
+        sec_name = bar.get("properties", {}).get("_CrossSectionName", "")
+        if sec_name in changed_secs:
+            sec_key = f"SEC_{sec_name}"
+            impact["sections"].setdefault(sec_key, {"bars": [], "surfaces": []})
+            impact["sections"][sec_key]["bars"].append({
+                "uid": bar_uid,
+                "label": bar.get("label", bar_uid),
+            })
+
+    # Scan all surfaces in NEW model for material references
+    for surf_uid, surf in new_model.get("surfaces", {}).items():
+        mat_name = surf.get("properties", {}).get("_MaterialName", "")
+        if mat_name in changed_mats:
+            mat_key = f"MAT_{mat_name}"
+            impact["materials"].setdefault(mat_key, {"bars": [], "surfaces": []})
+            impact["materials"][mat_key]["surfaces"].append({
+                "uid": surf_uid,
+                "label": surf.get("label", surf_uid),
+            })
+
+    # Also scan bars — some bars reference materials via their section's materials
+    for bar_uid, bar in new_model.get("bars", {}).items():
+        sec_name = bar.get("properties", {}).get("_CrossSectionName", "")
+        # Find section in new model to get its material names
+        for sec_uid, sec in new_model.get("sections", {}).items():
+            if sec.get("name") == sec_name:
+                sec_mat_names = sec.get("properties", {}).get("_MaterialNames", [])
+                for mn in sec_mat_names:
+                    if mn in changed_mats:
+                        mat_key = f"MAT_{mn}"
+                        impact["materials"].setdefault(mat_key, {"bars": [], "surfaces": []})
+                        # Avoid duplicates
+                        existing = [b["uid"] for b in impact["materials"][mat_key]["bars"]]
+                        if bar_uid not in existing:
+                            impact["materials"][mat_key]["bars"].append({
+                                "uid": bar_uid,
+                                "label": bar.get("label", bar_uid),
+                            })
+                break
+
+    return impact
+
+
 def compute_full_diff(old_model: dict, new_model: dict) -> dict:
-    return {
+    diff = {
         "nodes": _diff_category(old_model["nodes"], new_model["nodes"], prop_key=None),
         "bars": _diff_category(old_model["bars"], new_model["bars"]),
         "surfaces": _diff_category(old_model["surfaces"], new_model["surfaces"]),
         "materials": _diff_category(old_model["materials"], new_model["materials"]),
         "sections": _diff_category(old_model["sections"], new_model["sections"]),
     }
+    diff["impact"] = _compute_impact(diff, new_model)
+    return diff
 
 
 def build_summary(diff: dict) -> dict:
