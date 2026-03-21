@@ -319,9 +319,9 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
 
         if xs:
             if status == "unchanged":
-                bar_color = "#64748b"  # slate-500
-                bar_width = 2
-                bar_opacity = 0.55
+                bar_color = "#94a3b8"  # slate-400 visible
+                bar_width = 3
+                bar_opacity = 0.7
             else:
                 bar_color = STATUS_COLORS[status]
                 bar_width = 4
