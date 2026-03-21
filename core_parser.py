@@ -11,6 +11,7 @@ IGNORE_FIELDS_BAR = {
     "Name", "Id", "name", "id",
     "ExpandedCrossSection", "ExpandedResults", "ExpandedNodes",
     "Nodes", "StoreyID",
+    "CrossSection",  # raw Id — replaced by _CrossSectionName
 }
 
 IGNORE_FIELDS_SURFACE = {
@@ -19,10 +20,11 @@ IGNORE_FIELDS_SURFACE = {
     "ExpandedMeshResults", "ExpandedNodes",
     "Openings", "Regions", "Macro",
     "Nodes", "StoreyID", "InternalNodes",
+    "Material",  # raw Id — replaced by _MaterialName
 }
 
 IGNORE_FIELDS_MATERIAL = {"Name", "Id", "name", "id"}
-IGNORE_FIELDS_SECTION = {"Name", "Id", "name", "id", "ExpandedMaterials"}
+IGNORE_FIELDS_SECTION = {"Name", "Id", "name", "id", "ExpandedMaterials", "Materials"}
 
 
 def rc(val) -> float:
