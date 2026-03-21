@@ -342,7 +342,7 @@ def generate_local_summary(diff, summary, head_name, compare_name):
     lines = [f"**Resumen de cambios: `{compare_name}` → `{head_name}`**\n"]
     category_names = {
         "nodes": "Nodos", "bars": "Barras", "surfaces": "Superficies",
-        "materials": "Materiales", "sections": "Secciones",
+        "openings": "Aberturas", "materials": "Materiales", "sections": "Secciones",
     }
     total = summary["total"]
     if total == 0:
@@ -444,8 +444,8 @@ Instrucciones:
             st.markdown(local_summary)
             st.caption("💡 Conecta una API Key de Anthropic en la barra lateral para hacer preguntas interactivas.")
 
-    tab_labels = ["Nodos", "Barras", "Superficies", "Materiales", "Secciones"]
-    keys = ["nodes", "bars", "surfaces", "materials", "sections"]
+    tab_labels = ["Nodos", "Barras", "Superficies", "Aberturas", "Materiales", "Secciones"]
+    keys = ["nodes", "bars", "surfaces", "openings", "materials", "sections"]
     for tab_name, key in zip(tab_labels, keys):
         data = diff[key]
         added_n = len(data.get("added", {}))
@@ -496,6 +496,9 @@ Instrucciones:
                     else:
                         if key == "nodes":
                             st.caption(f"   {label} — ({item['X']}, {item['Y']}, {item['Z']})")
+                        elif key == "openings":
+                            surf_label = item.get("properties", {}).get("_SurfaceLabel", item.get("surface_uid", "?"))
+                            st.caption(f"   {label} — en {surf_label}")
                         else:
                             name = item.get("name", "")
                             extra = f" — {name}" if name and name != label else ""
@@ -639,7 +642,7 @@ else:
                 p = v["parsed"]
                 st.caption(
                     f"**{v['name']}** (`{v['branch']}`) — {len(p['nodes'])} nodos · "
-                    f"{len(p['bars'])} barras · {len(p['surfaces'])} superficies · {v['size_kb']} KB"
+                    f"{len(p['bars'])} barras · {len(p['surfaces'])} superficies · {len(p.get('openings', {}))} aberturas · {v['size_kb']} KB"
                 )
         st.info("Se necesitan al menos 2 modelos para comparar versiones.")
 
@@ -658,7 +661,7 @@ else:
                         fork_info = f" · fork de {v['fork_origin']}" if v.get("fork_origin") else ""
                         st.caption(
                             f"   📄 {v['filename']} — {len(p['nodes'])} nodos · {len(p['bars'])} barras · "
-                            f"{len(p['surfaces'])} superficies · {v['size_kb']} KB{fork_info}"
+                            f"{len(p['surfaces'])} superficies · {len(p.get('openings', {}))} aberturas · {v['size_kb']} KB{fork_info}"
                         )
 
         # ── Version selectors + Branch graph ─────────────────────────
