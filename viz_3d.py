@@ -50,6 +50,79 @@ def build_3d_figure(diff: dict, old_nodes: dict, new_nodes: dict) -> go.Figure:
                 legendgroup=f"b_{status}",
             ))
 
+    # ── Surfaces ──────────────────────────────────────────────────────────
+    for status in ["unchanged", "removed", "modified", "added"]:
+        items = diff["surfaces"].get(status, {})
+        if not items:
+            continue
+        color = STATUS_COLORS[status]
+        opacity = 0.08 if status == "unchanged" else 0.35
+
+        for uid, surf in items.items():
+            props = surf.get("properties", surf)
+            node_uids = props.get("_NodeUIDs", surf.get("node_uids", []))
+            coords = []
+            for nuid in node_uids:
+                n = all_nodes.get(nuid)
+                if n:
+                    coords.append((n["X"], n["Y"], n["Z"]))
+            if len(coords) < 3:
+                continue
+
+            xs = [c[0] for c in coords]
+            ys = [c[1] for c in coords]
+            zs = [c[2] for c in coords]
+
+            # Fan triangulation from first vertex (works for convex polygons)
+            ii, jj, kk = [], [], []
+            for t in range(1, len(coords) - 1):
+                ii.append(0)
+                jj.append(t)
+                kk.append(t + 1)
+
+            label = surf.get("label", surf.get("name", uid))
+            fig.add_trace(go.Mesh3d(
+                x=xs, y=ys, z=zs,
+                i=ii, j=jj, k=kk,
+                color=color,
+                opacity=opacity,
+                name=f"{label} ({STATUS_LABELS[status]})",
+                legendgroup=f"s_{status}",
+                showlegend=(uid == list(items.keys())[0]),  # solo 1 entrada en leyenda por status
+                hovertext=label,
+                hoverinfo="text",
+            ))
+
+        # Wireframe edges for surfaces
+        edge_xs, edge_ys, edge_zs = [], [], []
+        for uid, surf in items.items():
+            props = surf.get("properties", surf)
+            node_uids = props.get("_NodeUIDs", surf.get("node_uids", []))
+            coords = []
+            for nuid in node_uids:
+                n = all_nodes.get(nuid)
+                if n:
+                    coords.append((n["X"], n["Y"], n["Z"]))
+            if len(coords) < 3:
+                continue
+            # Close the polygon
+            for ci in range(len(coords)):
+                cj = (ci + 1) % len(coords)
+                edge_xs.extend([coords[ci][0], coords[cj][0], None])
+                edge_ys.extend([coords[ci][1], coords[cj][1], None])
+                edge_zs.extend([coords[ci][2], coords[cj][2], None])
+
+        if edge_xs:
+            fig.add_trace(go.Scatter3d(
+                x=edge_xs, y=edge_ys, z=edge_zs,
+                mode="lines",
+                line=dict(width=2 if status != "unchanged" else 1, color=color),
+                opacity=0.2 if status == "unchanged" else 0.6,
+                name=f"Sup. bordes {STATUS_LABELS[status]} ({len(items)})",
+                legendgroup=f"s_{status}",
+                showlegend=False,
+            ))
+
     # ── Nodes ────────────────────────────────────────────────────────────
     for status in ["unchanged", "removed", "modified", "added"]:
         items = diff["nodes"].get(status, {})
