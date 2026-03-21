@@ -553,21 +553,8 @@ with st.sidebar:
 #  MAIN CONTENT
 # ═════════════════════════════════════════════════════════════════════════════
 
-if not projects:
+with st.expander("📖 Instrucciones — Cómo organizar los proyectos", expanded=not projects):
     st.markdown("""
-    <div style="text-align: center; padding: 40px 20px;">
-        <div style="font-size: 4rem; margin-bottom: 16px;">📂</div>
-        <h2 style="color: #e2e8f0; font-family: 'JetBrains Mono', monospace;">
-            No se detectaron proyectos
-        </h2>
-        <p style="color: #64748b;">
-            Los proyectos y modelos se gestionan desde el plugin de Robot.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    with st.expander("📖 Instrucciones — Cómo organizar los proyectos", expanded=True):
-        st.markdown("""
 **1. Estructura de carpetas**
 
 Cada proyecto es una carpeta dentro de `projects/`. Las ramas son subcarpetas dentro del proyecto:
@@ -608,6 +595,8 @@ projects/
 5. Si la alternativa se aprueba, se integra como nueva versión en `main/`
 """)
 
+if not projects:
+    st.info("No se detectaron proyectos en la carpeta `projects/`. Los modelos se gestionan desde el plugin de Robot.")
 
 elif not selected_project:
     st.info("Selecciona un proyecto en la barra lateral.")
