@@ -293,14 +293,15 @@ def render_diff_view(
             st.markdown("#### 🤖 Asistente IA")
             st.caption(f"Contexto: {len(history_entries)} transiciones + diff actual + precios")
 
-            for msg in st.session_state.ai_messages:
-                with st.chat_message(msg["role"]):
-                    st.markdown(msg["content"])
+            # Scrollable chat container
+            chat_container = st.container(height=500)
+            with chat_container:
+                for msg in st.session_state.ai_messages:
+                    with st.chat_message(msg["role"]):
+                        st.markdown(msg["content"], unsafe_allow_html=True)
 
             if prompt := st.chat_input("Pregunta sobre los cambios..."):
                 st.session_state.ai_messages.append({"role": "user", "content": prompt})
-                with st.chat_message("user"):
-                    st.markdown(prompt)
 
                 changelog = build_changelog_json(diff, head_name, compare_name)
                 ai_context = build_ai_context(
@@ -315,43 +316,47 @@ def render_diff_view(
                     prices_path=prices_path,
                 )
 
-                system_prompt = f"""Eres un asistente experto en ingeniería estructural y estimación de costos. Tienes acceso al historial completo del proyecto (todas las transiciones entre versiones), la comparación actualmente seleccionada, y una base de datos de precios.
+                system_prompt = f"""Eres un asistente experto en ingeniería estructural y estimación de costos.
 
 {ai_context}
 
-Instrucciones:
-- Responde en español, conciso y técnico.
-- Usa labels de elementos (N_001, B_001, S_001) al mencionarlos.
-- Para materiales y secciones, usa nombres legibles.
-- "¿Qué cambió?" → resumen de la comparación actual.
-- "¿Qué ha pasado en el proyecto?" → usa el historial completo.
-- Para costos, usa la base de precios y las reglas de estimación. Aclara que son estimados.
+REGLAS DE RESPUESTA (obligatorias):
+- Máximo 150 palabras por respuesta. Sé directo y técnico.
+- Sin introducciones ni despedidas. Ve al grano.
+- Usa tablas cuando compares valores numéricos.
+- Para costos: muestra solo los totales y el delta, no el desglose por elemento individual.
+- Usa labels cortos (B_001, S_001) y nombres legibles de materiales/secciones.
+- Responde en español.
+- Si te piden detalle adicional, ahí sí amplía.
 """
-                with st.chat_message("assistant"):
-                    with st.spinner("Analizando..."):
-                        try:
-                            messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.ai_messages]
-                            payload = json.dumps({
-                                "model": "claude-sonnet-4-20250514",
-                                "max_tokens": 2000,
-                                "system": system_prompt,
-                                "messages": messages,
-                            })
-                            req = urllib.request.Request(
-                                "https://api.anthropic.com/v1/messages",
-                                data=payload.encode("utf-8"),
-                                headers={"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"},
-                                method="POST",
-                            )
-                            with urllib.request.urlopen(req, timeout=30) as resp:
-                                result = json.loads(resp.read().decode())
-                                ai_text = result["content"][0]["text"]
-                            st.markdown(ai_text)
-                            st.session_state.ai_messages.append({"role": "assistant", "content": ai_text})
-                        except Exception as e:
-                            error_msg = f"Error: {str(e)}"
-                            st.error(error_msg)
-                            st.session_state.ai_messages.append({"role": "assistant", "content": error_msg})
+                with chat_container:
+                    with st.chat_message("user"):
+                        st.markdown(prompt)
+                    with st.chat_message("assistant"):
+                        with st.spinner("Analizando..."):
+                            try:
+                                messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.ai_messages]
+                                payload = json.dumps({
+                                    "model": "claude-sonnet-4-20250514",
+                                    "max_tokens": 800,
+                                    "system": system_prompt,
+                                    "messages": messages,
+                                })
+                                req = urllib.request.Request(
+                                    "https://api.anthropic.com/v1/messages",
+                                    data=payload.encode("utf-8"),
+                                    headers={"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"},
+                                    method="POST",
+                                )
+                                with urllib.request.urlopen(req, timeout=30) as resp:
+                                    result = json.loads(resp.read().decode())
+                                    ai_text = result["content"][0]["text"]
+                                st.markdown(ai_text, unsafe_allow_html=True)
+                                st.session_state.ai_messages.append({"role": "assistant", "content": ai_text})
+                            except Exception as e:
+                                error_msg = f"Error: {str(e)}"
+                                st.error(error_msg)
+                                st.session_state.ai_messages.append({"role": "assistant", "content": error_msg})
         else:
             st.markdown("#### 📝 ¿Qué cambió?")
             st.markdown(generate_local_summary(diff, summary, head_name, compare_name))
