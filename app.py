@@ -416,9 +416,6 @@ Instrucciones:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def render_history_sidebar(history_entries: list[dict]):
-    st.markdown("---")
-    st.markdown(f"#### 📜 Historial ({len(history_entries)} transiciones)")
-
     if not history_entries:
         st.caption("Se necesitan al menos 2 modelos para generar el historial.")
         return
@@ -638,6 +635,8 @@ else:
         else:
             st.warning("Selecciona dos versiones diferentes.")
 
-        # ── Sidebar: history ──────────────────────────────────────────
+        # ── Sidebar: history (toggle) ─────────────────────────────────
         with st.sidebar:
-            render_history_sidebar(history_entries)
+            show_history = st.toggle(f"📜 Historial ({len(history_entries)} transiciones)", value=False)
+            if show_history:
+                render_history_sidebar(history_entries)
