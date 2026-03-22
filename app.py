@@ -33,7 +33,7 @@ from diff_engine import (
 )
 from viz_3d import build_3d_figure
 from history_manager import (
-    save_diff_entry, get_history_entries, delete_entry,
+    build_full_history, get_history_entries,
     clear_history, build_ai_context, load_prices,
 )
 
@@ -101,7 +101,6 @@ defaults = {
     "ai_messages": [],
     "current_diff": None,
     "current_report_text": "",
-    "last_diff_key": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -529,26 +528,20 @@ Estimación de costos:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def render_history_sidebar(project_path: Path):
-    """Render the cumulative history in the sidebar."""
+    """Render the auto-computed project history in the sidebar."""
     entries = get_history_entries(project_path)
 
     st.markdown("---")
-    st.markdown(f"#### 📜 Historial ({len(entries)} comparaciones)")
+    st.markdown(f"#### 📜 Historial ({len(entries)} transiciones)")
 
     if not entries:
-        st.caption("El historial se llenará automáticamente al comparar versiones.")
+        st.caption("Se necesitan al menos 2 modelos para generar el historial.")
         return
 
-    for entry in reversed(entries):  # newest first
-        ts = entry.get("timestamp", "")
-        try:
-            dt = datetime.fromisoformat(ts)
-            ts_display = dt.strftime("%d/%m/%Y %H:%M")
-        except (ValueError, TypeError):
-            ts_display = ts[:16]
-
+    for entry in entries:  # chronological order (follows project evolution)
         s = entry.get("summary", {})
         total = s.get("total", 0)
+        t_type = entry.get("transition_type", "")
 
         # Compact stats
         stats_parts = []
@@ -558,16 +551,24 @@ def render_history_sidebar(project_path: Path):
             if ct > 0:
                 stats_parts.append(f"{cat[:3]}:{ct}")
 
+        # Transition type badge color
+        if "fork" in t_type:
+            badge_color = "#f59e0b"
+        elif "main" in t_type:
+            badge_color = "#06b6d4"
+        else:
+            badge_color = "#8b5cf6"
+
         st.markdown(
             f'<div class="history-entry">'
-            f'<div class="timestamp">{ts_display}</div>'
+            f'<div class="timestamp"><span style="color:{badge_color};">● {t_type}</span></div>'
             f'<div class="versions">{entry.get("compare", "?")} → {entry.get("head", "?")}</div>'
-            f'<div class="stats">{total} cambios — {", ".join(stats_parts)}</div>'
+            f'<div class="stats">{total} cambios — {", ".join(stats_parts) if stats_parts else "sin cambios"}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
 
-    if st.button("🗑️ Limpiar historial", key="clear_history", use_container_width=True):
+    if st.button("🔄 Recalcular historial", key="clear_history", use_container_width=True):
         clear_history(project_path)
         st.rerun()
 
@@ -757,6 +758,16 @@ else:
     else:
         version_labels = [v["label"] for v in all_versions]
 
+        # ── Auto-compute full history (all consecutive diffs) ────────
+        history_entries = build_full_history(
+            project_path=project_path,
+            all_versions=all_versions,
+            branches=branches,
+            diff_fn=compute_full_diff,
+            summary_fn=build_summary,
+            changelog_fn=build_changelog_json,
+        )
+
         # ── File info ────────────────────────────────────────────────
         with st.expander(f"📄 Modelos en **{selected_project}** ({len(all_versions)} en {len(branches)} ramas)", expanded=False):
             for branch in branches:
@@ -806,18 +817,6 @@ else:
 
             st.session_state.current_diff = diff
             st.session_state.current_report_text = report_text
-
-            # ── AUTO-SAVE to history ─────────────────────────────────
-            diff_key = f"{compare['label']}→{head['label']}"
-            if st.session_state.last_diff_key != diff_key:
-                save_diff_entry(
-                    project_path=project_path,
-                    head_label=head["label"],
-                    compare_label=compare["label"],
-                    changelog=changelog,
-                    summary=summary,
-                )
-                st.session_state.last_diff_key = diff_key
 
             st.markdown("---")
             render_diff_view(
