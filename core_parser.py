@@ -4,20 +4,34 @@ Generates geometry-based UIDs for nodes, bars, and surfaces.
 """
 
 import hashlib
+import math
 
 COORD_PRECISION = 4
+
+
+def _polygon_area_3d(coords: list[tuple]) -> float:
+    """
+    Compute the area of a 3D polygon using the cross-product method.
+    Works for planar polygons in any orientation (horizontal slabs, vertical walls, etc).
+    """
+    if len(coords) < 3:
+        return 0.0
+    # Newell's method for 3D polygon area
+    nx, ny, nz = 0.0, 0.0, 0.0
+    n = len(coords)
+    for i in range(n):
+        j = (i + 1) % n
+        xi, yi, zi = coords[i]
+        xj, yj, zj = coords[j]
+        nx += (yi - yj) * (zi + zj)
+        ny += (zi - zj) * (xi + xj)
+        nz += (xi - xj) * (yi + yj)
+    return 0.5 * math.sqrt(nx * nx + ny * ny + nz * nz)
 
 IGNORE_FIELDS_BAR = {
     "Name", "Id", "name", "id",
     "ExpandedCrossSection", "ExpandedResults", "ExpandedNodes",
     "Nodes", "StoreyID",
-    "CrossSection",    # raw Id — replaced by _CrossSectionName
-    "StoreyNumber",    # metadata
-    "Length",          # computed field
-    "IsGrouped",       # metadata
-    "Segment",         # metadata
-    "LCS", "LCSRotation", "LCSX", "LCSY", "LCSZ",  # local coordinate system
-    "SystemLine", "AnalysisBehavior",                 # analysis metadata
 }
 
 IGNORE_FIELDS_SURFACE = {
@@ -26,24 +40,15 @@ IGNORE_FIELDS_SURFACE = {
     "ExpandedMeshResults", "ExpandedNodes",
     "Openings", "Regions", "Macro",
     "Nodes", "StoreyID", "InternalNodes",
-    "Material",        # raw Id (single) — replaced by _MaterialName
-    "Materials",       # raw Id list — replaced by _MaterialName
-    "StoreyNumber",    # metadata
-    "Area",            # computed field
-    "LCS", "LCSRotation", "LCSX", "LCSY", "LCSZ",  # local coordinate system
-    "SystemPlane", "AnalyticBehavior",                # analysis metadata
-    "Edges",           # edge type flags — not a design property
+}
+
+IGNORE_FIELDS_OPENING = {
+    "Name", "Id", "name", "id",
+    "Nodes", "Surface", "Edges",
 }
 
 IGNORE_FIELDS_MATERIAL = {"Name", "Id", "name", "id"}
 IGNORE_FIELDS_SECTION = {"Name", "Id", "name", "id", "ExpandedMaterials", "Materials"}
-
-IGNORE_FIELDS_OPENING = {
-    "Name", "Id", "name", "id",
-    "ExpandedNodes",
-    "Nodes",       # raw Ids — replaced by _NodeUIDs
-    "Surface",     # raw Id — replaced by _SurfaceUID and _SurfaceName
-}
 
 
 def rc(val) -> float:
@@ -115,14 +120,36 @@ def parse_model(data: dict) -> dict:
     sections = {}
     sec_id_to_uid = {}
     sec_id_to_name = {}
+    sec_id_to_dims = {}  # id → {height_m, width_m, area_m2, perimeter_m}
     for s in raw_sections:
         uid = section_uid(s)
         orig_id = str(s.get("Id", ""))
         sec_id_to_uid[orig_id] = uid
         sec_id_to_name[orig_id] = s.get("Name", orig_id)
-        mat_names = [mat_id_to_name.get(mid, mid) for mid in (s.get("Materials") or [])]
+        mat_names = [mat_id_to_name.get(str(mid), str(mid)) for mid in (s.get("Materials") or [])]
         props = {k: v for k, v in s.items() if k not in IGNORE_FIELDS_SECTION and v is not None}
         props["_MaterialNames"] = mat_names
+
+        # Extract dimensions from Parameters [height_m, width_m] for Shape=1 (rectangular)
+        params = s.get("Parameters", [])
+        shape = s.get("Shape")
+        dims = {}
+        if shape == 1 and len(params) >= 2:
+            h_m = round(float(params[0]), 4)
+            w_m = round(float(params[1]), 4)
+            dims = {
+                "height_m": h_m,
+                "width_m": w_m,
+                "area_m2": round(h_m * w_m, 6),
+                "perimeter_m": round(2 * (h_m + w_m), 4),
+            }
+            props["_Height_m"] = dims["height_m"]
+            props["_Width_m"] = dims["width_m"]
+            props["_Area_m2"] = dims["area_m2"]
+            props["_Perimeter_m"] = dims["perimeter_m"]
+
+        sec_id_to_dims[orig_id] = dims
+
         sections[uid] = {
             "uid": uid, "original_id": orig_id,
             "name": s.get("Name", "?"),
@@ -146,22 +173,48 @@ def parse_model(data: dict) -> dict:
     for i, uid in enumerate(sorted(nodes.keys()), start=1):
         nodes[uid]["label"] = f"N_{i:03d}"
 
-    # ── Bars ─────────────────────────────────────────────────────────────
+    # ── Bars (CurveMembers) ──────────────────────────────────────────────
     raw_bars = data.get("CurveMembers", [])
     bars = {}
     for b in raw_bars:
-        node_ids = b.get("Nodes", [])
-        if len(node_ids) < 2:
+        b_node_ids = b.get("Nodes", [])
+        if len(b_node_ids) < 2:
             continue
-        uid_i = id_to_uid.get(str(node_ids[0]))
-        uid_j = id_to_uid.get(str(node_ids[-1]))
+        uid_i = id_to_uid.get(str(b_node_ids[0]))
+        uid_j = id_to_uid.get(str(b_node_ids[-1]))
         if not uid_i or not uid_j:
             continue
         uid = bar_uid(uid_i, uid_j)
-        sec_name = _resolve_name(raw_sections, b.get("CrossSection"), "?")
         props = {k: v for k, v in b.items() if k not in IGNORE_FIELDS_BAR and v is not None}
-        props["_CrossSectionName"] = sec_name
         props["_NodeUIDs"] = [uid_i, uid_j]
+        # Resolve cross section name
+        cs_id = str(b.get("CrossSection", ""))
+        cs_name = sec_id_to_name.get(cs_id, cs_id)
+        props["_CrossSectionName"] = cs_name
+
+        # Propagate section dimensions to bar
+        dims = sec_id_to_dims.get(cs_id, {})
+        if dims:
+            props["_Section_Height_m"] = dims["height_m"]
+            props["_Section_Width_m"] = dims["width_m"]
+            props["_Section_Area_m2"] = dims["area_m2"]
+            props["_Section_Perimeter_m"] = dims["perimeter_m"]
+
+        # Compute bar length from node coordinates
+        ni = nodes.get(uid_i)
+        nj = nodes.get(uid_j)
+        if ni and nj:
+            dx = nj["X"] - ni["X"]
+            dy = nj["Y"] - ni["Y"]
+            dz = nj["Z"] - ni["Z"]
+            length = round((dx**2 + dy**2 + dz**2) ** 0.5, 4)
+            props["_Length_m"] = length
+
+            # Compute volume and formwork area
+            if dims:
+                props["_Volume_m3"] = round(dims["area_m2"] * length, 6)
+                props["_Formwork_m2"] = round(dims["perimeter_m"] * length, 4)
+
         bars[uid] = {
             "uid": uid, "original_id": str(b.get("Id", "")),
             "name": b.get("Name", "?"),
@@ -171,7 +224,7 @@ def parse_model(data: dict) -> dict:
     for i, uid in enumerate(sorted(bars.keys()), start=1):
         bars[uid]["label"] = f"B_{i:03d}"
 
-    # ── Surfaces ─────────────────────────────────────────────────────────
+    # ── Surfaces (SurfaceMembers) ────────────────────────────────────────
     raw_surfaces = data.get("SurfaceMembers", [])
     surfaces = {}
     for s in raw_surfaces:
@@ -181,19 +234,47 @@ def parse_model(data: dict) -> dict:
         if len(s_node_uids) < 3:
             continue
         uid = surface_uid(s_node_uids)
-        # Resolve material — handle both "Material" (single Id) and "Materials" (list of Ids)
-        mat_ref = s.get("Material")
-        mat_list = s.get("Materials", [])
-        if mat_ref:
-            mat_name = _resolve_name(raw_materials, mat_ref, "?")
-        elif mat_list:
-            mat_names_list = [_resolve_name(raw_materials, mid, mid) for mid in mat_list]
-            mat_name = ", ".join(mat_names_list)
-        else:
-            mat_name = "?"
         props = {k: v for k, v in s.items() if k not in IGNORE_FIELDS_SURFACE and v is not None}
-        props["_MaterialName"] = mat_name
         props["_NodeUIDs"] = s_node_uids
+        # Resolve material name
+        mat_ids = s.get("Materials", [])
+        if mat_ids:
+            mat_name = mat_id_to_name.get(str(mat_ids[0]), str(mat_ids[0]))
+        else:
+            mat_name = s.get("Material", "?")
+            if isinstance(mat_name, str) and mat_name in mat_id_to_name:
+                mat_name = mat_id_to_name[mat_name]
+            elif str(mat_name) in mat_id_to_name:
+                mat_name = mat_id_to_name[str(mat_name)]
+        props["_MaterialName"] = mat_name
+
+        # Compute polygon area from node coordinates (3D → projected)
+        coords = []
+        for nuid in s_node_uids:
+            n = nodes.get(nuid)
+            if n:
+                coords.append((n["X"], n["Y"], n["Z"]))
+
+        if len(coords) >= 3:
+            area = _polygon_area_3d(coords)
+            props["_Area_m2"] = round(area, 4)
+
+            # Thickness in mm → m, compute volume
+            thickness_mm = s.get("Thickness", 0)
+            if thickness_mm:
+                thickness_m = thickness_mm / 1000.0
+                props["_Thickness_m"] = round(thickness_m, 4)
+                props["_Volume_m3"] = round(area * thickness_m, 6)
+
+            # Formwork area
+            surf_type = s.get("Type", 0)
+            if surf_type == 0:  # Slab: formwork = bottom face
+                props["_Formwork_m2"] = round(area, 4)
+                props["_ElementType"] = "Losa"
+            elif surf_type == 1:  # Wall: formwork = 2 faces
+                props["_Formwork_m2"] = round(area * 2, 4)
+                props["_ElementType"] = "Muro"
+
         surfaces[uid] = {
             "uid": uid, "original_id": str(s.get("Id", "")),
             "name": s.get("Name", "?"),
@@ -226,11 +307,9 @@ def parse_model(data: dict) -> dict:
         if len(o_node_uids) < 3:
             continue
         uid = opening_uid(o_node_uids)
-        # Resolve parent surface reference
         surf_id = str(o.get("Surface", ""))
         surf_uid = surface_id_to_uid.get(surf_id, "?")
         surf_name = surface_id_to_name.get(surf_id, surf_id)
-        # Find surface label
         surf_label = surfaces.get(surf_uid, {}).get("label", surf_name)
 
         props = {k: v for k, v in o.items() if k not in IGNORE_FIELDS_OPENING and v is not None}
