@@ -214,79 +214,70 @@ def build_ai_context(
     prices_path: Path | None = None,
 ) -> str:
     """
-    Full AI context:
-    1. Project metadata
-    2. Complete history (all consecutive diffs)
-    3. Current UI selection
-    4. Prices (if available)
+    Compact AI context — optimized for token efficiency.
+    History = summaries only. Detail only for current selection.
+    Prices = compact table, no ranges/notes.
     """
     parts = []
 
-    # ── 1. Project metadata ─────────────────────────────────────────
-    parts.append("## PROYECTO")
-    parts.append(f"Nombre: {project_name}")
-    parts.append(f"Ramas: {', '.join(branches)}")
-    parts.append(f"Total modelos: {len(all_versions)}")
-    parts.append("")
-
-    parts.append("### Modelos por rama")
+    # ── 1. Project (compact) ────────────────────────────────────────
+    parts.append(f"Proyecto: {project_name} | Ramas: {', '.join(branches)}")
     for branch in branches:
         bv = [v for v in all_versions if v["branch"] == branch]
         if bv:
-            parts.append(f"**{branch}** ({len(bv)} modelos):")
             for v in bv:
                 p = v["parsed"]
-                fork = f" (fork de {v['fork_origin']})" if v.get("fork_origin") else ""
-                parts.append(
-                    f"  - {v['name']}: {len(p['nodes'])} nodos, "
-                    f"{len(p['bars'])} barras, {len(p['surfaces'])} superficies, "
-                    f"{len(p.get('openings', {}))} aberturas{fork}"
-                )
+                fork = f" fork:{v['fork_origin']}" if v.get("fork_origin") else ""
+                parts.append(f"  {v['name']}({branch}): {len(p['nodes'])}n {len(p['bars'])}b {len(p['surfaces'])}s{fork}")
     parts.append("")
 
-    # ── 2. Full history ─────────────────────────────────────────────
+    # ── 2. History (summaries only — NO full changelog JSON) ────────
     if history_entries:
-        parts.append(f"## HISTORIAL COMPLETO ({len(history_entries)} transiciones)")
-        parts.append("")
+        parts.append(f"## HISTORIAL ({len(history_entries)} transiciones)")
         for i, entry in enumerate(history_entries, 1):
-            t_type = entry.get("transition_type", "")
-            parts.append(f"### Transición {i}: {entry['compare']} → {entry['head']} [{t_type}]")
-
             s = entry.get("summary", {})
-            parts.append(f"Total cambios: {s.get('total', 0)}")
-
+            line = f"T{i} [{entry.get('transition_type','')}] {entry['compare']} → {entry['head']}: {s.get('total',0)} cambios"
+            cats = []
             for cat in ["nodes", "bars", "surfaces", "openings", "materials", "sections"]:
                 cs = s.get(cat, {})
                 a, r, m = cs.get("added", 0), cs.get("removed", 0), cs.get("modified", 0)
                 if a + r + m > 0:
-                    parts.append(f"  {cat}: +{a} -{r} ~{m}")
+                    cats.append(f"{cat}:+{a}-{r}~{m}")
+            if cats:
+                line += f" ({', '.join(cats)})"
+            parts.append(line)
+        parts.append("")
 
-            cl = entry.get("changelog", {})
-            if cl.get("categories"):
-                parts.append("Detalle:")
-                parts.append(json.dumps(cl["categories"], indent=2, ensure_ascii=False))
-            parts.append("")
-
-    # ── 3. Current selection ────────────────────────────────────────
+    # ── 3. Current selection (FULL detail — this is what user sees) ─
     if current_changelog:
-        parts.append("## COMPARACIÓN ACTUAL (seleccionada en UI)")
-        parts.append(f"HEAD: {head_label}")
-        parts.append(f"Comparando con: {compare_label}")
+        parts.append(f"## COMPARACIÓN ACTUAL: {compare_label} → {head_label}")
         if current_summary:
-            parts.append(f"Total cambios: {current_summary.get('total', '?')}")
-        parts.append("")
-        parts.append("### Detalle")
-        parts.append(json.dumps(current_changelog, indent=2, ensure_ascii=False))
+            parts.append(f"Total: {current_summary.get('total', '?')} cambios")
+        parts.append(json.dumps(current_changelog, indent=1, ensure_ascii=False))
         parts.append("")
 
-    # ── 4. Prices ───────────────────────────────────────────────────
+    # ── 4. Prices (compact table — no ranges, no notes) ─────────────
     if prices_path:
         prices = load_prices(prices_path)
         if prices:
-            parts.append("## BASE DE DATOS DE PRECIOS")
-            parts.append(f"Moneda: {prices.get('_meta', {}).get('currency', 'USD')}")
-            parts.append("")
-            parts.append(json.dumps(prices, indent=2, ensure_ascii=False))
+            parts.append("## PRECIOS (USD)")
+            # Concrete grades
+            grades = prices.get("concrete", {}).get("grades", {})
+            for gid, g in grades.items():
+                parts.append(f"  {g['name']}: ${g['price_per_m3']}/m³")
+            # Formwork
+            fw = prices.get("formwork", {}).get("types", {})
+            for fid, f in fw.items():
+                parts.append(f"  Formaleta {f['name']}: ${f['price_per_m2']}/m²")
+            # Labor
+            labor = prices.get("labor", {}).get("activities", {})
+            for lid, l in labor.items():
+                parts.append(f"  {l['name']}: ${l['price']}/{l['unit'].split('/')[-1]}")
+            # Estimation rules (compact)
+            rules = prices.get("estimation_rules", {})
+            if rules:
+                parts.append("")
+                parts.append("Reglas: HA-30→fc28MPa. Vol_barra=SecArea×Long. Vol_sup=Area×Espesor/1000. Costo=Vol×precio_concreto + Formwork×precio_formaleta + Vol×mano_obra")
             parts.append("")
 
     return "\n".join(parts)
