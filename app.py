@@ -342,17 +342,33 @@ REGLAS DE RESPUESTA (obligatorias):
                                     "system": system_prompt,
                                     "messages": messages,
                                 })
-                                req = urllib.request.Request(
-                                    "https://api.anthropic.com/v1/messages",
-                                    data=payload.encode("utf-8"),
-                                    headers={"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"},
-                                    method="POST",
-                                )
-                                with urllib.request.urlopen(req, timeout=30) as resp:
-                                    result = json.loads(resp.read().decode())
-                                    ai_text = result["content"][0]["text"]
-                                st.markdown(ai_text, unsafe_allow_html=True)
-                                st.session_state.ai_messages.append({"role": "assistant", "content": ai_text})
+                                headers = {"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"}
+
+                                # Retry up to 3 times on 429
+                                ai_text = None
+                                for attempt in range(3):
+                                    try:
+                                        req = urllib.request.Request(
+                                            "https://api.anthropic.com/v1/messages",
+                                            data=payload.encode("utf-8"),
+                                            headers=headers, method="POST",
+                                        )
+                                        with urllib.request.urlopen(req, timeout=60) as resp:
+                                            result = json.loads(resp.read().decode())
+                                            ai_text = result["content"][0]["text"]
+                                        break
+                                    except urllib.error.HTTPError as he:
+                                        if he.code == 429 and attempt < 2:
+                                            import time
+                                            wait = (attempt + 1) * 15
+                                            st.caption(f"⏳ Rate limit — reintentando en {wait}s...")
+                                            time.sleep(wait)
+                                        else:
+                                            raise
+
+                                if ai_text:
+                                    st.markdown(ai_text, unsafe_allow_html=True)
+                                    st.session_state.ai_messages.append({"role": "assistant", "content": ai_text})
                             except Exception as e:
                                 error_msg = f"Error: {str(e)}"
                                 st.error(error_msg)
