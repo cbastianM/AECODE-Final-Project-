@@ -1,0 +1,278 @@
+{
+  "_meta": {
+    "version": "1.0",
+    "currency": "USD",
+    "last_updated": "2026-03-22",
+    "source": "Market averages 2025-2026. Adjust to local conditions.",
+    "notes": "Prices are reference values. Actual costs vary by region, supplier, and project scale. Users should update these values to match their local market."
+  },
+
+  "concrete": {
+    "_description": "Ready-mix concrete by compressive strength (f'c). Price per cubic meter, delivered.",
+    "_unit": "USD/m³",
+    "grades": {
+      "fc_14_MPa": {
+        "name": "f'c 14 MPa (2000 psi)",
+        "use": "Solados, rellenos, concreto pobre, nivelación",
+        "price_per_m3": 85,
+        "price_range": [70, 100]
+      },
+      "fc_17.5_MPa": {
+        "name": "f'c 17.5 MPa (2500 psi)",
+        "use": "Cimentaciones livianas, muros no estructurales, pisos",
+        "price_per_m3": 95,
+        "price_range": [80, 110]
+      },
+      "fc_21_MPa": {
+        "name": "f'c 21 MPa (3000 psi)",
+        "use": "Losas, vigas, columnas residenciales, cimentaciones",
+        "price_per_m3": 110,
+        "price_range": [95, 130]
+      },
+      "fc_24.5_MPa": {
+        "name": "f'c 24.5 MPa (3500 psi)",
+        "use": "Estructuras de mediana exigencia, losas de entrepiso",
+        "price_per_m3": 120,
+        "price_range": [100, 140]
+      },
+      "fc_28_MPa": {
+        "name": "f'c 28 MPa (4000 psi)",
+        "use": "Columnas, vigas, losas estructurales, edificios 3-10 pisos",
+        "price_per_m3": 135,
+        "price_range": [115, 160]
+      },
+      "fc_35_MPa": {
+        "name": "f'c 35 MPa (5000 psi)",
+        "use": "Edificios altos, elementos prefabricados, alta exigencia",
+        "price_per_m3": 155,
+        "price_range": [130, 185]
+      },
+      "fc_42_MPa": {
+        "name": "f'c 42 MPa (6000 psi)",
+        "use": "Edificios altos, puentes, estructuras especiales",
+        "price_per_m3": 180,
+        "price_range": [155, 215]
+      }
+    },
+    "extras": {
+      "pumping": {
+        "description": "Bombeo de concreto (bomba estacionaria o pluma)",
+        "unit": "USD/m³",
+        "price": 15,
+        "price_range": [10, 25],
+        "notes": "Para alturas >15m o distancias >50m desde el mixer"
+      },
+      "additives_accelerant": {
+        "description": "Aditivo acelerante de fraguado",
+        "unit": "USD/m³",
+        "price": 8,
+        "price_range": [5, 12]
+      },
+      "additives_plasticizer": {
+        "description": "Aditivo plastificante / superplastificante",
+        "unit": "USD/m³",
+        "price": 10,
+        "price_range": [6, 15]
+      },
+      "fiber_reinforcement": {
+        "description": "Fibra de polipropileno o acero en la mezcla",
+        "unit": "USD/m³",
+        "price": 12,
+        "price_range": [8, 20]
+      }
+    }
+  },
+
+  "formwork": {
+    "_description": "Encofrado/formaleta por tipo de elemento. Precio por metro cuadrado de contacto.",
+    "_unit": "USD/m²",
+    "types": {
+      "slab_floor": {
+        "name": "Losa de entrepiso (formaleta horizontal)",
+        "price_per_m2": 35,
+        "price_range": [25, 50],
+        "includes": "Material + instalación + desencofrado",
+        "reuses_assumed": 4
+      },
+      "beam": {
+        "name": "Vigas (formaleta lateral + fondo)",
+        "price_per_m2": 45,
+        "price_range": [30, 65],
+        "includes": "Material + instalación + desencofrado",
+        "reuses_assumed": 4
+      },
+      "column_rectangular": {
+        "name": "Columnas rectangulares",
+        "price_per_m2": 50,
+        "price_range": [35, 70],
+        "includes": "Material + instalación + desencofrado",
+        "reuses_assumed": 4
+      },
+      "column_circular": {
+        "name": "Columnas circulares (tubo desechable o metálico)",
+        "price_per_m2": 65,
+        "price_range": [45, 90],
+        "includes": "Material + instalación + desencofrado",
+        "reuses_assumed": 2
+      },
+      "wall": {
+        "name": "Muros (formaleta a dos caras)",
+        "price_per_m2": 40,
+        "price_range": [28, 55],
+        "includes": "Material + instalación + desencofrado",
+        "reuses_assumed": 4
+      },
+      "foundation": {
+        "name": "Cimentaciones (zapatas, vigas de cimentación)",
+        "price_per_m2": 30,
+        "price_range": [20, 42],
+        "includes": "Material + instalación + desencofrado",
+        "reuses_assumed": 3
+      },
+      "stair": {
+        "name": "Escaleras",
+        "price_per_m2": 70,
+        "price_range": [50, 100],
+        "includes": "Material + instalación + desencofrado",
+        "reuses_assumed": 2
+      }
+    },
+    "systems": {
+      "timber_plywood": {
+        "name": "Madera / triplex (sistema tradicional)",
+        "material_cost_per_m2": 15,
+        "typical_reuses": "4-6",
+        "notes": "Más económico inicial, menor durabilidad"
+      },
+      "steel_panels": {
+        "name": "Paneles metálicos (sistema industrial)",
+        "material_cost_per_m2": 50,
+        "typical_reuses": "50+",
+        "notes": "Mayor inversión inicial, muy económico por reuso"
+      },
+      "aluminum": {
+        "name": "Formaleta de aluminio",
+        "material_cost_per_m2": 80,
+        "typical_reuses": "200+",
+        "notes": "Liviano, rápido de instalar, ideal para proyectos repetitivos"
+      }
+    }
+  },
+
+  "labor": {
+    "_description": "Mano de obra para actividades de concreto. Precios por unidad indicada.",
+    "activities": {
+      "concrete_placement_slab": {
+        "name": "Vaciado y vibrado de concreto en losas",
+        "unit": "USD/m³",
+        "price": 25,
+        "price_range": [18, 35],
+        "includes": "Vaciado, vibrado, nivelación inicial"
+      },
+      "concrete_placement_column": {
+        "name": "Vaciado y vibrado de concreto en columnas",
+        "unit": "USD/m³",
+        "price": 35,
+        "price_range": [25, 50],
+        "includes": "Vaciado por capas, vibrado"
+      },
+      "concrete_placement_beam": {
+        "name": "Vaciado y vibrado de concreto en vigas",
+        "unit": "USD/m³",
+        "price": 30,
+        "price_range": [22, 42],
+        "includes": "Vaciado, vibrado"
+      },
+      "concrete_placement_wall": {
+        "name": "Vaciado y vibrado de concreto en muros",
+        "unit": "USD/m³",
+        "price": 32,
+        "price_range": [24, 45],
+        "includes": "Vaciado por capas, vibrado"
+      },
+      "concrete_placement_foundation": {
+        "name": "Vaciado de concreto en cimentaciones",
+        "unit": "USD/m³",
+        "price": 22,
+        "price_range": [15, 30],
+        "includes": "Vaciado, vibrado, nivelación"
+      },
+      "finishing_smooth": {
+        "name": "Acabado liso (llana metálica)",
+        "unit": "USD/m²",
+        "price": 8,
+        "price_range": [5, 12],
+        "includes": "Alisado y curado básico"
+      },
+      "finishing_broom": {
+        "name": "Acabado escobillado (antideslizante)",
+        "unit": "USD/m²",
+        "price": 6,
+        "price_range": [4, 9]
+      },
+      "curing": {
+        "name": "Curado (antisol o membrana)",
+        "unit": "USD/m²",
+        "price": 3,
+        "price_range": [2, 5],
+        "includes": "Material + aplicación"
+      }
+    }
+  },
+
+  "estimation_rules": {
+    "_description": "Reglas para que la IA estime costos a partir del modelo estructural.",
+    "mapping": {
+      "bars_to_concrete": {
+        "description": "Las barras (CurveMembers) representan vigas y columnas. Su volumen se calcula a partir de la sección transversal (_CrossSectionName) y la longitud entre nodos.",
+        "section_parsing": {
+          "format_AxB": "Secciones tipo 'AxB' (ej: 13x50) → ancho=0.13m, alto=0.50m → área = 0.13 × 0.50 = 0.065 m²",
+          "format_B_RAxB": "Secciones tipo 'B RAxB' (ej: B R15x90) → ancho=0.15m, alto=0.90m → área = 0.15 × 0.90 = 0.135 m²",
+          "format_SEC_R": "Secciones tipo 'SEC_R_M1 250/250' → ancho=0.25m, alto=0.25m → área = 0.0625 m²",
+          "general_rule": "Los números en el nombre representan dimensiones en centímetros. Dividir por 100 para obtener metros.",
+          "examples": [
+            "13x50: viga de 0.13m × 0.50m, área = 0.065 m², perímetro = 1.26m",
+            "13x60: viga de 0.13m × 0.60m, área = 0.078 m², perímetro = 1.46m",
+            "B R15x130: elemento de 0.15m × 1.30m, área = 0.195 m², perímetro = 2.90m",
+            "B R15x90: elemento de 0.15m × 0.90m, área = 0.135 m², perímetro = 2.10m"
+          ],
+          "volume": "Volumen = área_sección × longitud_barra (longitud = distancia entre nodos i y j)"
+        },
+        "element_types": {
+          "Type_1": "Viga (beam)",
+          "Type_2": "Columna (column)"
+        }
+      },
+      "surfaces_to_concrete": {
+        "description": "Las superficies (SurfaceMembers) representan losas y muros. Su volumen se calcula a partir del espesor (Thickness en mm) y el área del polígono.",
+        "thickness_parsing": "Thickness: 150 → 0.15m",
+        "example": "Losa de 50 m² con espesor 150mm: Vol = 50 × 0.15 = 7.5 m³",
+        "element_types": {
+          "Type_0": "Losa (slab)",
+          "Type_1": "Muro (wall)"
+        }
+      },
+      "material_to_grade": {
+        "description": "El campo _MaterialName del modelo indica la resistencia del concreto.",
+        "examples": {
+          "HA - 25": "f'c ≈ 25 MPa → usar fc_24.5_MPa",
+          "HA - 30": "f'c ≈ 30 MPa → usar fc_28_MPa",
+          "MAT_C8/10": "Concreto pobre → usar fc_14_MPa",
+          "MAT_C25/30": "f'c 25 MPa → usar fc_24.5_MPa",
+          "MAT_C30/37": "f'c 30 MPa → usar fc_28_MPa"
+        }
+      },
+      "formwork_estimation": {
+        "description": "El área de formaleta se estima a partir de la geometría del elemento.",
+        "bars": "Perímetro de sección × longitud = área de contacto de formaleta",
+        "surfaces_slab": "Área de la losa ≈ área de formaleta (cara inferior)",
+        "surfaces_wall": "Área del muro × 2 caras = área de formaleta"
+      }
+    },
+    "cost_formula": {
+      "per_element": "Costo = (Vol × precio_concreto/m³) + (Área_formaleta × precio_formaleta/m²) + (Vol × precio_mano_obra/m³)",
+      "total_project": "Suma de costos de todos los elementos",
+      "comparison": "Diferencia de costos = Costo(HEAD) - Costo(Compare). Si negativo, HEAD es más económico."
+    }
+  }
+}
