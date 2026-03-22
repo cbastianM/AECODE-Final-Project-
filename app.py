@@ -3,10 +3,12 @@ Structural Model Version Control System
 ========================================
 Read-only Streamlit app. Models and branches are managed externally
 (via the Robot plugin). The app auto-detects projects, branches, and
-models from the filesystem:
+models from the filesystem. Every diff is auto-saved to a cumulative
+history per project (.history.json).
 
     projects/
     └── Edificio-5P/
+        ├── .history.json          ← cumulative changelog
         ├── main/
         │   ├── V0_Base.json
         │   └── V1_Ampliacion.json
@@ -30,6 +32,10 @@ from diff_engine import (
     compute_full_diff, build_summary, diff_to_report_text, build_changelog_json,
 )
 from viz_3d import build_3d_figure
+from history_manager import (
+    save_diff_entry, get_history_entries, delete_entry,
+    clear_history, build_ai_context, load_prices,
+)
 
 # ─── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -68,6 +74,22 @@ st.markdown("""
         border-radius: 10px; padding: 0.6rem;
     }
 
+    .history-entry {
+        background: #0f1923; border: 1px solid #1e2d42;
+        border-radius: 8px; padding: 0.8rem;
+        margin-bottom: 0.5rem;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .history-entry .timestamp {
+        color: #64748b; font-size: 0.7rem;
+    }
+    .history-entry .versions {
+        color: #e2e8f0; font-size: 0.8rem; font-weight: 600;
+    }
+    .history-entry .stats {
+        color: #94a3b8; font-size: 0.7rem;
+    }
+
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     .stDeployButton {display: none;}
@@ -79,6 +101,7 @@ defaults = {
     "ai_messages": [],
     "current_diff": None,
     "current_report_text": "",
+    "last_diff_key": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -96,6 +119,7 @@ BRANCH_COLORS = [
 
 APP_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 PROJECTS_DIR = APP_DIR / "projects"
+PRICES_PATH = APP_DIR / "prices.json"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -103,7 +127,6 @@ PROJECTS_DIR = APP_DIR / "projects"
 # ═════════════════════════════════════════════════════════════════════════════
 
 def get_projects() -> list[str]:
-    """Detect project folders inside projects/."""
     if not PROJECTS_DIR.exists():
         return []
     return sorted([
@@ -113,7 +136,6 @@ def get_projects() -> list[str]:
 
 
 def get_branches(project_name: str) -> list[str]:
-    """Detect branch subfolders inside a project. 'main' always first."""
     project_path = PROJECTS_DIR / project_name
     if not project_path.exists():
         return []
@@ -130,34 +152,23 @@ def get_branches(project_name: str) -> list[str]:
 
 
 def parse_version_name(filename_stem: str, is_main: bool) -> dict:
-    """
-    Parse version info from filename convention:
-      - Main branch:   V{n}_{nombre}       → version_num=n, fork_origin=None
-      - Other branches: V{n}_V{origin}_{nombre} → version_num=n, fork_origin="V{origin}"
-
-    Returns dict with: version_num (int or None), fork_origin (str or None),
-                       display_name (str), version_prefix (str).
-    """
     import re
     result = {"version_num": None, "fork_origin": None, "display_name": filename_stem, "version_prefix": ""}
 
     if is_main:
-        # Main: V{n}_{nombre}
         match = re.match(r'^(V(\d+))_(.+)$', filename_stem, re.IGNORECASE)
         if match:
             result["version_prefix"] = match.group(1)
             result["version_num"] = int(match.group(2))
             result["display_name"] = match.group(3)
     else:
-        # Branch: V{n}_V{origin}_{nombre}
         match = re.match(r'^(V(\d+))_(V(\d+))_(.+)$', filename_stem, re.IGNORECASE)
         if match:
             result["version_prefix"] = match.group(1)
             result["version_num"] = int(match.group(2))
-            result["fork_origin"] = match.group(3)  # e.g. "V2"
+            result["fork_origin"] = match.group(3)
             result["display_name"] = match.group(5)
         else:
-            # Fallback: same as main pattern
             match = re.match(r'^(V(\d+))_(.+)$', filename_stem, re.IGNORECASE)
             if match:
                 result["version_prefix"] = match.group(1)
@@ -168,8 +179,6 @@ def parse_version_name(filename_stem: str, is_main: bool) -> dict:
 
 
 def get_branch_models(project_name: str, branch_name: str) -> list[dict]:
-    """List all .json/.jsaf files in a branch folder, sorted by name.
-    Parses version naming convention to extract fork origin."""
     branch_path = PROJECTS_DIR / project_name / branch_name
     if not branch_path.exists():
         return []
@@ -196,7 +205,6 @@ def get_branch_models(project_name: str, branch_name: str) -> list[dict]:
 
 @st.cache_data(show_spinner=False)
 def load_model_cached(file_path: str, _mtime: float) -> tuple:
-    """Load and parse a model from disk. Cached by path + modification time."""
     try:
         with open(file_path, "r", encoding="utf-8") as fh:
             raw = json.load(fh)
@@ -207,7 +215,6 @@ def load_model_cached(file_path: str, _mtime: float) -> tuple:
 
 
 def load_model(model_info: dict) -> tuple:
-    """Load a model using the cache (keyed by path + mtime)."""
     path = model_info["path"]
     mtime = os.path.getmtime(path)
     return load_model_cached(path, mtime)
@@ -218,7 +225,6 @@ def load_model(model_info: dict) -> tuple:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
-    """Render branch graph — each version knows its branch from the filesystem."""
     if not all_versions:
         return ""
 
@@ -265,18 +271,15 @@ def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
             parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1.5" stroke-opacity="0.5"/>')
         prev_by_branch[bname] = (px, py)
 
-    # Fork lines: use fork_origin from filename convention (e.g. V3_V2_Name → forks from V2)
-    # For the first file of each non-main branch, find the main node matching fork_origin
     seen = set()
     for vidx in range(len(all_versions)):
         px, py, bname = positions[vidx]
         if bname != branch_names[0] and bname not in seen:
             seen.add(bname)
-            fork_origin = all_versions[vidx].get("fork_origin")  # e.g. "V2"
+            fork_origin = all_versions[vidx].get("fork_origin")
             color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
 
             if fork_origin:
-                # Find the main node whose version_prefix matches fork_origin
                 found = False
                 for pi in range(len(all_versions)):
                     pv = all_versions[pi]
@@ -285,7 +288,6 @@ def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
                         parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
                         found = True
                         break
-                # Fallback: if fork_origin not found, connect to last main node before this one
                 if not found:
                     for pi in range(vidx - 1, -1, -1):
                         ppx, ppy, pb = positions[pi]
@@ -293,7 +295,6 @@ def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
                             parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
                             break
             else:
-                # No fork_origin info: fallback to last main node before this one
                 for pi in range(vidx - 1, -1, -1):
                     ppx, ppy, pb = positions[pi]
                     if pb == branch_names[0]:
@@ -361,7 +362,13 @@ def generate_local_summary(diff, summary, head_name, compare_name):
     return "\n".join(lines)
 
 
-def render_diff_view(diff, summary, model_head, model_compare, head_name, compare_name, api_key):
+def render_diff_view(
+    diff, summary, model_head, model_compare,
+    head_name, compare_name, api_key,
+    project_path, project_name, branches, all_versions,
+    prices_path=None,
+):
+    """Render 3D view + AI chat (or local summary) + detail tabs."""
     col_3d, col_ai = st.columns([3, 2])
 
     with col_3d:
@@ -372,6 +379,8 @@ def render_diff_view(diff, summary, model_head, model_compare, head_name, compar
     with col_ai:
         if api_key:
             st.markdown("#### 🤖 Asistente IA")
+            st.caption("Contexto: diff actual + historial + metadata + precios de construcción")
+
             for msg in st.session_state.ai_messages:
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
@@ -381,18 +390,43 @@ def render_diff_view(diff, summary, model_head, model_compare, head_name, compar
                 with st.chat_message("user"):
                     st.markdown(prompt)
 
+                # Build full AI context: current diff + history + metadata
                 changelog = build_changelog_json(diff, head_name, compare_name)
-                system_prompt = f"""Eres un asistente experto en ingeniería estructural. El usuario tiene un gestor de versiones de modelos estructurales y quiere entender los cambios entre versiones.
+                ai_context = build_ai_context(
+                    project_path=project_path,
+                    project_name=project_name,
+                    branches=branches,
+                    all_versions=all_versions,
+                    current_changelog=changelog,
+                    current_summary=summary,
+                    head_label=head_name,
+                    compare_label=compare_name,
+                    prices_path=prices_path,
+                )
 
-Aquí está el changelog completo (solo elementos que cambiaron):
+                system_prompt = f"""Eres un asistente experto en ingeniería estructural y estimación de costos de construcción. El usuario tiene un gestor de versiones de modelos estructurales y quiere entender los cambios entre versiones y sus implicaciones de costo.
 
-{json.dumps(changelog, indent=2, ensure_ascii=False)}
+Tienes acceso al contexto completo del proyecto, incluyendo la comparación actual, el historial acumulado de todos los cambios registrados, la metadata de ramas y modelos, y una base de datos de precios de construcción en concreto.
+
+{ai_context}
 
 Instrucciones:
 - Responde en español, de forma concisa y técnica.
 - Usa los labels de elementos (N_001, B_001, S_001) cuando los menciones.
 - Para materiales y secciones, usa sus nombres legibles.
-- Si te preguntan "¿qué cambió?", da un resumen claro y organizado.
+- Si te preguntan "¿qué cambió?", da un resumen claro y organizado de la comparación actual.
+- Si te preguntan sobre el historial o la evolución del proyecto, usa las entradas del historial acumulado.
+- Puedes hacer análisis cruzados: por ejemplo, si un elemento fue agregado en una versión y modificado en otra.
+- Si te piden un resumen ejecutivo, hazlo breve y orientado a la toma de decisiones.
+
+Estimación de costos:
+- Si te preguntan sobre costos, usa la base de datos de precios y las reglas de estimación incluidas.
+- Para barras (vigas/columnas): calcula el volumen a partir de la sección transversal y la longitud entre nodos.
+- Para superficies (losas/muros): calcula el volumen a partir del espesor (Thickness) y el área del polígono.
+- Mapea el _MaterialName a la resistencia de concreto correspondiente para obtener el precio por m³.
+- Incluye costos de formaleta y mano de obra en tus estimaciones.
+- Cuando compares versiones, calcula la diferencia de costo (delta) entre HEAD y Compare.
+- Siempre aclara que son estimados de referencia y que los precios reales varían por región y proveedor.
 """
                 with st.chat_message("assistant"):
                     with st.spinner("Analizando..."):
@@ -429,6 +463,7 @@ Instrucciones:
             st.markdown(local_summary)
             st.caption("💡 Conecta una API Key de Anthropic en la barra lateral para hacer preguntas interactivas.")
 
+    # ── Detail tabs ──────────────────────────────────────────────────
     tab_labels = ["Nodos", "Barras", "Superficies", "Aberturas", "Materiales", "Secciones"]
     keys = ["nodes", "bars", "surfaces", "openings", "materials", "sections"]
     for tab_name, key in zip(tab_labels, keys):
@@ -465,7 +500,6 @@ Instrucciones:
                         with st.expander(f"   {label}", expanded=False):
                             for pk, cv in changes.items():
                                 st.markdown(f"- `{pk}`: `{cv['old']}` → `{cv['new']}`")
-                            # Show impacted elements for materials/sections
                             if key in ("materials", "sections"):
                                 impact_data = diff.get("impact", {}).get(key, {}).get(uid, {})
                                 affected_bars = impact_data.get("bars", [])
@@ -491,13 +525,61 @@ Instrucciones:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  HISTORY SIDEBAR
+# ═════════════════════════════════════════════════════════════════════════════
+
+def render_history_sidebar(project_path: Path):
+    """Render the cumulative history in the sidebar."""
+    entries = get_history_entries(project_path)
+
+    st.markdown("---")
+    st.markdown(f"#### 📜 Historial ({len(entries)} comparaciones)")
+
+    if not entries:
+        st.caption("El historial se llenará automáticamente al comparar versiones.")
+        return
+
+    for entry in reversed(entries):  # newest first
+        ts = entry.get("timestamp", "")
+        try:
+            dt = datetime.fromisoformat(ts)
+            ts_display = dt.strftime("%d/%m/%Y %H:%M")
+        except (ValueError, TypeError):
+            ts_display = ts[:16]
+
+        s = entry.get("summary", {})
+        total = s.get("total", 0)
+
+        # Compact stats
+        stats_parts = []
+        for cat in ["nodes", "bars", "surfaces", "openings", "materials", "sections"]:
+            cs = s.get(cat, {})
+            ct = cs.get("added", 0) + cs.get("removed", 0) + cs.get("modified", 0)
+            if ct > 0:
+                stats_parts.append(f"{cat[:3]}:{ct}")
+
+        st.markdown(
+            f'<div class="history-entry">'
+            f'<div class="timestamp">{ts_display}</div>'
+            f'<div class="versions">{entry.get("compare", "?")} → {entry.get("head", "?")}</div>'
+            f'<div class="stats">{total} cambios — {", ".join(stats_parts)}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    if st.button("🗑️ Limpiar historial", key="clear_history", use_container_width=True):
+        clear_history(project_path)
+        st.rerun()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  HEADER
 # ═════════════════════════════════════════════════════════════════════════════
 
 st.markdown("""
 <div class="app-header">
     <h1>🏗️ Structural VCS</h1>
-    <span class="tag">v2.1</span>
+    <span class="tag">v3.0 — historial</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -548,6 +630,23 @@ with st.sidebar:
         help="Para el asistente de IA. Opcional.",
     )
 
+    # ── Price database status ───────────────────────────────────────────
+    if PRICES_PATH.exists():
+        prices_data = load_prices(PRICES_PATH)
+        if prices_data:
+            meta = prices_data.get("_meta", {})
+            st.caption(
+                f"💰 Precios: {meta.get('currency', '?')} · "
+                f"Actualizado: {meta.get('last_updated', '?')}"
+            )
+        else:
+            st.caption("⚠️ prices.json encontrado pero con errores")
+    else:
+        st.caption("💡 Agrega `prices.json` junto a `app.py` para estimaciones de costo")
+
+    # ── History (rendered later if project is selected) ─────────────────
+    # Placeholder — will be filled in the main flow
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  MAIN CONTENT
@@ -562,6 +661,7 @@ Cada proyecto es una carpeta dentro de `projects/`. Las ramas son subcarpetas de
 ```
 projects/
 └── Mi-Proyecto/
+    ├── .history.json              ← historial acumulativo (auto-generado)
     ├── main/
     │   ├── V1_Modelo-Base.json
     │   ├── V2_Ampliacion-3er-Piso.json
@@ -584,15 +684,14 @@ projects/
 
 - El primer prefijo (`V4`) es el número de versión propio
 - El segundo prefijo (`V2`) indica **de qué versión de main se desprende** la rama
-- En `main/` no se usa doble prefijo — las versiones son secuenciales
 
-**3. Ejemplo de flujo**
+**3. Historial automático**
 
-1. El ingeniero crea `V1_Modelo-Base.json` en `main/` desde Robot
-2. Hace cambios y exporta `V2_Ampliacion.json` en `main/`
-3. Quiere explorar postensado sin perder la línea principal → crea la carpeta `feature-postensado/` y exporta `V4_V2_Losa-Postensada.json` (fork desde V2)
-4. El diagrama de ramas mostrará la bifurcación desde V2
-5. Si la alternativa se aprueba, se integra como nueva versión en `main/`
+Cada vez que compares dos versiones, el diff se guarda automáticamente en `.history.json`.
+El asistente de IA tiene acceso al historial completo para responder preguntas como:
+- "¿Qué ha cambiado en todo el proyecto?"
+- "¿Cuál fue la evolución de las secciones de vigas?"
+- "Dame un resumen ejecutivo de todos los cambios"
 """)
 
 if not projects:
@@ -610,13 +709,14 @@ elif not branches:
         </h3>
         <p style="color: #64748b;">
             No se detectaron ramas (subcarpetas).<br>
-            Estructura esperada: <code>projects/{selected_project}/main/V1_Nombre.json</code><br>
-            Para ramas alternativas: <code>projects/{selected_project}/feature-xyz/V2_V1_Nombre.json</code>
+            Estructura esperada: <code>projects/{selected_project}/main/V1_Nombre.json</code>
         </p>
     </div>
     """, unsafe_allow_html=True)
 
 else:
+    project_path = PROJECTS_DIR / selected_project
+
     # ── Collect all versions across all branches ─────────────────────
     all_versions = []
     for branch in branches:
@@ -688,13 +788,13 @@ else:
                 format_func=lambda i: version_labels[i],
             )
 
-        # ── Branch graph (collapsible) ───────────────────────────────
+        # ── Branch graph ───────────────────────────────────────────
         with st.expander("🔀 Diagrama de ramas", expanded=False):
             svg_html = render_branch_graph_svg(all_versions, branches, head_idx, compare_idx)
             if svg_html:
                 st.markdown(svg_html, unsafe_allow_html=True)
 
-        # ── Diff ─────────────────────────────────────────────────────
+        # ── Diff + Auto-save ─────────────────────────────────────────
         if head_idx != compare_idx:
             head = all_versions[head_idx]
             compare = all_versions[compare_idx]
@@ -702,14 +802,31 @@ else:
             diff = compute_full_diff(compare["parsed"], head["parsed"])
             summary = build_summary(diff)
             report_text = diff_to_report_text(diff, head["label"], compare["label"])
+            changelog = build_changelog_json(diff, head["label"], compare["label"])
 
             st.session_state.current_diff = diff
             st.session_state.current_report_text = report_text
 
-            st.markdown("---")
-            render_diff_view(diff, summary, head["parsed"], compare["parsed"], head["label"], compare["label"], api_key)
+            # ── AUTO-SAVE to history ─────────────────────────────────
+            diff_key = f"{compare['label']}→{head['label']}"
+            if st.session_state.last_diff_key != diff_key:
+                save_diff_entry(
+                    project_path=project_path,
+                    head_label=head["label"],
+                    compare_label=compare["label"],
+                    changelog=changelog,
+                    summary=summary,
+                )
+                st.session_state.last_diff_key = diff_key
 
-            changelog = build_changelog_json(diff, head["label"], compare["label"])
+            st.markdown("---")
+            render_diff_view(
+                diff, summary, head["parsed"], compare["parsed"],
+                head["label"], compare["label"], api_key,
+                project_path, selected_project, branches, all_versions,
+                prices_path=PRICES_PATH,
+            )
+
             with st.sidebar:
                 st.markdown("---")
                 st.markdown("#### 📥 Changelog")
@@ -721,3 +838,7 @@ else:
                 st.caption(f"{summary['total']} cambios totales")
         else:
             st.warning("Selecciona dos versiones diferentes para comparar.")
+
+    # ── Render history in sidebar ────────────────────────────────────
+    with st.sidebar:
+        render_history_sidebar(project_path)
