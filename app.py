@@ -1,19 +1,9 @@
 """
-Structural Model Version Control System
-========================================
-Read-only Streamlit app. Models and branches are managed externally
-(via the Robot plugin). The app auto-detects projects, branches, and
-models from the filesystem. Every diff is auto-saved to a cumulative
-history per project (.history.json).
-
-    projects/
-    └── Edificio-5P/
-        ├── .history.json          ← cumulative changelog
-        ├── main/
-        │   ├── V0_Base.json
-        │   └── V1_Ampliacion.json
-        └── feature-losa-postensada/
-            └── V2_Postensado.json
+Structural Model Version Control System — v3.0
+================================================
+All consecutive diffs are computed automatically in memory.
+The full changelog includes every transition across all branches.
+Works on Streamlit Cloud (no disk writes needed).
 """
 
 import streamlit as st
@@ -33,8 +23,8 @@ from diff_engine import (
 )
 from viz_3d import build_3d_figure
 from history_manager import (
-    build_full_history, get_history_entries,
-    clear_history, build_ai_context, load_prices,
+    compute_full_history, build_full_changelog_json,
+    build_ai_context, load_prices,
 )
 
 # ─── Page config ────────────────────────────────────────────────────────────
@@ -49,50 +39,21 @@ st.set_page_config(
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;700&display=swap');
-
     .stApp { background-color: #0a0e17; }
-
     .app-header {
         background: linear-gradient(135deg, #0f1923 0%, #162033 100%);
         border: 1px solid #1e2d42; border-radius: 12px;
         padding: 1.2rem 1.8rem; margin-bottom: 1rem;
         display: flex; align-items: center; gap: 1rem;
     }
-    .app-header h1 {
-        margin: 0; font-size: 1.5rem; color: #e2e8f0;
-        font-family: 'JetBrains Mono', monospace;
-    }
-    .app-header .tag {
-        background: #22c55e20; color: #22c55e;
-        padding: 2px 10px; border-radius: 20px;
-        font-size: 0.7rem; font-weight: 600;
-        font-family: 'JetBrains Mono', monospace;
-    }
-
-    div[data-testid="stMetric"] {
-        background: #0f1923; border: 1px solid #1e2d42;
-        border-radius: 10px; padding: 0.6rem;
-    }
-
-    .history-entry {
-        background: #0f1923; border: 1px solid #1e2d42;
-        border-radius: 8px; padding: 0.8rem;
-        margin-bottom: 0.5rem;
-        font-family: 'JetBrains Mono', monospace;
-    }
-    .history-entry .timestamp {
-        color: #64748b; font-size: 0.7rem;
-    }
-    .history-entry .versions {
-        color: #e2e8f0; font-size: 0.8rem; font-weight: 600;
-    }
-    .history-entry .stats {
-        color: #94a3b8; font-size: 0.7rem;
-    }
-
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    .stDeployButton {display: none;}
+    .app-header h1 { margin: 0; font-size: 1.5rem; color: #e2e8f0; font-family: 'JetBrains Mono', monospace; }
+    .app-header .tag { background: #22c55e20; color: #22c55e; padding: 2px 10px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+    div[data-testid="stMetric"] { background: #0f1923; border: 1px solid #1e2d42; border-radius: 10px; padding: 0.6rem; }
+    .history-entry { background: #0f1923; border: 1px solid #1e2d42; border-radius: 8px; padding: 0.8rem; margin-bottom: 0.5rem; font-family: 'JetBrains Mono', monospace; }
+    .history-entry .tag { font-size: 0.7rem; }
+    .history-entry .versions { color: #e2e8f0; font-size: 0.8rem; font-weight: 600; }
+    .history-entry .stats { color: #94a3b8; font-size: 0.7rem; }
+    #MainMenu {visibility: hidden;} footer {visibility: hidden;} .stDeployButton {display: none;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -101,47 +62,34 @@ defaults = {
     "ai_messages": [],
     "current_diff": None,
     "current_report_text": "",
+    "history_entries": [],
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  CONSTANTS & PATHS
-# ═════════════════════════════════════════════════════════════════════════════
-
-BRANCH_COLORS = [
-    "#6366f1", "#06b6d4", "#f59e0b", "#ef4444",
-    "#22c55e", "#ec4899", "#8b5cf6", "#14b8a6",
-]
-
+# ─── Constants ──────────────────────────────────────────────────────────────
+BRANCH_COLORS = ["#6366f1", "#06b6d4", "#f59e0b", "#ef4444", "#22c55e", "#ec4899", "#8b5cf6", "#14b8a6"]
 APP_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 PROJECTS_DIR = APP_DIR / "projects"
 PRICES_PATH = APP_DIR / "prices.json"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  FILESYSTEM DISCOVERY (read-only)
+#  FILESYSTEM DISCOVERY
 # ═════════════════════════════════════════════════════════════════════════════
 
 def get_projects() -> list[str]:
     if not PROJECTS_DIR.exists():
         return []
-    return sorted([
-        d.name for d in PROJECTS_DIR.iterdir()
-        if d.is_dir() and not d.name.startswith(".")
-    ])
+    return sorted([d.name for d in PROJECTS_DIR.iterdir() if d.is_dir() and not d.name.startswith(".")])
 
 
 def get_branches(project_name: str) -> list[str]:
     project_path = PROJECTS_DIR / project_name
     if not project_path.exists():
         return []
-    branches = []
-    for d in sorted(project_path.iterdir()):
-        if d.is_dir() and not d.name.startswith("."):
-            branches.append(d.name)
+    branches = [d.name for d in sorted(project_path.iterdir()) if d.is_dir() and not d.name.startswith(".")]
     for priority in ("main", "master"):
         if priority in branches:
             branches.remove(priority)
@@ -153,7 +101,6 @@ def get_branches(project_name: str) -> list[str]:
 def parse_version_name(filename_stem: str, is_main: bool) -> dict:
     import re
     result = {"version_num": None, "fork_origin": None, "display_name": filename_stem, "version_prefix": ""}
-
     if is_main:
         match = re.match(r'^(V(\d+))_(.+)$', filename_stem, re.IGNORECASE)
         if match:
@@ -173,7 +120,6 @@ def parse_version_name(filename_stem: str, is_main: bool) -> dict:
                 result["version_prefix"] = match.group(1)
                 result["version_num"] = int(match.group(2))
                 result["display_name"] = match.group(3)
-
     return result
 
 
@@ -181,23 +127,17 @@ def get_branch_models(project_name: str, branch_name: str) -> list[dict]:
     branch_path = PROJECTS_DIR / project_name / branch_name
     if not branch_path.exists():
         return []
-
     is_main = branch_name in ("main", "master")
     models = []
     for f in sorted(branch_path.iterdir()):
         if f.suffix.lower() in (".json", ".jsaf") and f.is_file():
             vinfo = parse_version_name(f.stem, is_main)
             models.append({
-                "name": f.stem,
-                "filename": f.name,
-                "path": str(f),
+                "name": f.stem, "filename": f.name, "path": str(f),
                 "size_kb": round(f.stat().st_size / 1024, 1),
                 "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
                 "branch": branch_name,
-                "version_num": vinfo["version_num"],
-                "fork_origin": vinfo["fork_origin"],
-                "version_prefix": vinfo["version_prefix"],
-                "display_name": vinfo["display_name"],
+                **vinfo,
             })
     return models
 
@@ -207,16 +147,13 @@ def load_model_cached(file_path: str, _mtime: float) -> tuple:
     try:
         with open(file_path, "r", encoding="utf-8") as fh:
             raw = json.load(fh)
-        parsed = parse_model(raw)
-        return parsed, raw
+        return parse_model(raw), raw
     except Exception as e:
         return None, str(e)
 
 
 def load_model(model_info: dict) -> tuple:
-    path = model_info["path"]
-    mtime = os.path.getmtime(path)
-    return load_model_cached(path, mtime)
+    return load_model_cached(model_info["path"], os.path.getmtime(model_info["path"]))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -226,15 +163,8 @@ def load_model(model_info: dict) -> tuple:
 def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
     if not all_versions:
         return ""
-
     branch_lane = {name: i for i, name in enumerate(branch_names)}
-
-    node_radius = 8
-    h_spacing = 50
-    v_spacing = 32
-    left_pad = 80
-    top_pad = 20
-
+    node_radius, h_spacing, v_spacing, left_pad, top_pad = 8, 50, 32, 80, 20
     total_lanes = max(len(branch_names), 1)
     svg_w = max(left_pad + len(all_versions) * h_spacing + 40, 250)
     content_h = top_pad + total_lanes * v_spacing + 16
@@ -247,7 +177,6 @@ def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
         '<defs><filter id="glow"><feGaussianBlur stdDeviation="2" result="g"/>'
         '<feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>',
     ]
-
     for bname in branch_names:
         lane = branch_lane[bname]
         by = top_pad + lane * v_spacing
@@ -257,9 +186,8 @@ def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
 
     positions = {}
     for vidx, v in enumerate(all_versions):
-        bname = v["branch"]
-        lane = branch_lane.get(bname, 0)
-        positions[vidx] = (left_pad + vidx * h_spacing, top_pad + lane * v_spacing, bname)
+        lane = branch_lane.get(v["branch"], 0)
+        positions[vidx] = (left_pad + vidx * h_spacing, top_pad + lane * v_spacing, v["branch"])
 
     prev_by_branch = {}
     for vidx in range(len(all_versions)):
@@ -277,23 +205,16 @@ def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
             seen.add(bname)
             fork_origin = all_versions[vidx].get("fork_origin")
             color = BRANCH_COLORS[branch_lane.get(bname, 0) % len(BRANCH_COLORS)]
-
+            connected = False
             if fork_origin:
-                found = False
                 for pi in range(len(all_versions)):
                     pv = all_versions[pi]
                     if pv["branch"] == branch_names[0] and pv.get("version_prefix", "").upper() == fork_origin.upper():
                         ppx, ppy, _ = positions[pi]
                         parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
-                        found = True
+                        connected = True
                         break
-                if not found:
-                    for pi in range(vidx - 1, -1, -1):
-                        ppx, ppy, pb = positions[pi]
-                        if pb == branch_names[0]:
-                            parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
-                            break
-            else:
+            if not connected:
                 for pi in range(vidx - 1, -1, -1):
                     ppx, ppy, pb = positions[pi]
                     if pb == branch_names[0]:
@@ -307,8 +228,7 @@ def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
         is_compare = vidx == compare_idx
         vname = all_versions[vidx]["name"]
         prefix = vname.split("_")[0] if "_" in vname else vname
-        if len(prefix) > 4:
-            prefix = prefix[:4]
+        if len(prefix) > 4: prefix = prefix[:4]
 
         if is_head:
             parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius + 3}" fill="none" stroke="#06b6d4" stroke-width="1.5" filter="url(#glow)" stroke-opacity="0.6"/>')
@@ -321,7 +241,6 @@ def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
         else:
             parts.append(f'<circle cx="{px}" cy="{py}" r="{node_radius}" fill="#1e2d42" stroke="{color}" stroke-width="1.5"/>')
             parts.append(f'<text x="{px}" y="{py + 3}" fill="#94a3b8" font-size="6" font-weight="600" text-anchor="middle" font-family="JetBrains Mono, monospace">{prefix}</text>')
-
         label = vname if len(vname) <= 10 else vname[:9] + "…"
         parts.append(f'<text x="{px}" y="{py + node_radius + 10}" fill="#475569" font-size="5" font-family="JetBrains Mono, monospace" text-anchor="middle">{label}</text>')
 
@@ -329,7 +248,6 @@ def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
     parts.append(f'<text x="{left_pad + 6}" y="{legend_y + 3}" fill="#64748b" font-size="6" font-family="JetBrains Mono, monospace">HEAD</text>')
     parts.append(f'<circle cx="{left_pad + 46}" cy="{legend_y}" r="3" fill="#6366f1"/>')
     parts.append(f'<text x="{left_pad + 52}" y="{legend_y + 3}" fill="#64748b" font-size="6" font-family="JetBrains Mono, monospace">Compare</text>')
-
     parts.append("</svg>")
     return "\n".join(parts)
 
@@ -339,35 +257,30 @@ def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
 # ═════════════════════════════════════════════════════════════════════════════
 
 def generate_local_summary(diff, summary, head_name, compare_name):
-    lines = [f"**Resumen de cambios: `{compare_name}` → `{head_name}`**\n"]
-    category_names = {
-        "nodes": "Nodos", "bars": "Barras", "surfaces": "Superficies",
-        "openings": "Aberturas", "materials": "Materiales", "sections": "Secciones",
-    }
+    lines = [f"**Resumen: `{compare_name}` → `{head_name}`**\n"]
+    category_names = {"nodes": "Nodos", "bars": "Barras", "surfaces": "Superficies", "openings": "Aberturas", "materials": "Materiales", "sections": "Secciones"}
     total = summary["total"]
     if total == 0:
-        lines.append("No se detectaron cambios entre las dos versiones.")
+        lines.append("No se detectaron cambios.")
         return "\n".join(lines)
-    lines.append(f"Se detectaron **{total} cambios** en total:\n")
+    lines.append(f"**{total} cambios** en total:\n")
     for key, cat_name in category_names.items():
         s = summary[key]
-        if s["total_changes"] == 0:
-            continue
-        parts = []
-        if s["added"]:    parts.append(f"+{s['added']} agregados")
-        if s["removed"]:  parts.append(f"-{s['removed']} eliminados")
-        if s["modified"]: parts.append(f"~{s['modified']} modificados")
-        lines.append(f"- **{cat_name}**: {', '.join(parts)}")
+        if s["total_changes"] == 0: continue
+        p = []
+        if s["added"]:    p.append(f"+{s['added']} agregados")
+        if s["removed"]:  p.append(f"-{s['removed']} eliminados")
+        if s["modified"]: p.append(f"~{s['modified']} modificados")
+        lines.append(f"- **{cat_name}**: {', '.join(p)}")
     return "\n".join(lines)
 
 
 def render_diff_view(
     diff, summary, model_head, model_compare,
     head_name, compare_name, api_key,
-    project_path, project_name, branches, all_versions,
-    prices_path=None,
+    project_name, branches, all_versions,
+    history_entries, prices_path=None,
 ):
-    """Render 3D view + AI chat (or local summary) + detail tabs."""
     col_3d, col_ai = st.columns([3, 2])
 
     with col_3d:
@@ -378,7 +291,7 @@ def render_diff_view(
     with col_ai:
         if api_key:
             st.markdown("#### 🤖 Asistente IA")
-            st.caption("Contexto: diff actual + historial + metadata + precios de construcción")
+            st.caption(f"Contexto: {len(history_entries)} transiciones + diff actual + precios")
 
             for msg in st.session_state.ai_messages:
                 with st.chat_message(msg["role"]):
@@ -389,13 +302,12 @@ def render_diff_view(
                 with st.chat_message("user"):
                     st.markdown(prompt)
 
-                # Build full AI context: current diff + history + metadata
                 changelog = build_changelog_json(diff, head_name, compare_name)
                 ai_context = build_ai_context(
-                    project_path=project_path,
                     project_name=project_name,
                     branches=branches,
                     all_versions=all_versions,
+                    history_entries=history_entries,
                     current_changelog=changelog,
                     current_summary=summary,
                     head_label=head_name,
@@ -403,29 +315,17 @@ def render_diff_view(
                     prices_path=prices_path,
                 )
 
-                system_prompt = f"""Eres un asistente experto en ingeniería estructural y estimación de costos de construcción. El usuario tiene un gestor de versiones de modelos estructurales y quiere entender los cambios entre versiones y sus implicaciones de costo.
-
-Tienes acceso al contexto completo del proyecto, incluyendo la comparación actual, el historial acumulado de todos los cambios registrados, la metadata de ramas y modelos, y una base de datos de precios de construcción en concreto.
+                system_prompt = f"""Eres un asistente experto en ingeniería estructural y estimación de costos. Tienes acceso al historial completo del proyecto (todas las transiciones entre versiones), la comparación actualmente seleccionada, y una base de datos de precios.
 
 {ai_context}
 
 Instrucciones:
-- Responde en español, de forma concisa y técnica.
-- Usa los labels de elementos (N_001, B_001, S_001) cuando los menciones.
-- Para materiales y secciones, usa sus nombres legibles.
-- Si te preguntan "¿qué cambió?", da un resumen claro y organizado de la comparación actual.
-- Si te preguntan sobre el historial o la evolución del proyecto, usa las entradas del historial acumulado.
-- Puedes hacer análisis cruzados: por ejemplo, si un elemento fue agregado en una versión y modificado en otra.
-- Si te piden un resumen ejecutivo, hazlo breve y orientado a la toma de decisiones.
-
-Estimación de costos:
-- Si te preguntan sobre costos, usa la base de datos de precios y las reglas de estimación incluidas.
-- Para barras (vigas/columnas): calcula el volumen a partir de la sección transversal y la longitud entre nodos.
-- Para superficies (losas/muros): calcula el volumen a partir del espesor (Thickness) y el área del polígono.
-- Mapea el _MaterialName a la resistencia de concreto correspondiente para obtener el precio por m³.
-- Incluye costos de formaleta y mano de obra en tus estimaciones.
-- Cuando compares versiones, calcula la diferencia de costo (delta) entre HEAD y Compare.
-- Siempre aclara que son estimados de referencia y que los precios reales varían por región y proveedor.
+- Responde en español, conciso y técnico.
+- Usa labels de elementos (N_001, B_001, S_001) al mencionarlos.
+- Para materiales y secciones, usa nombres legibles.
+- "¿Qué cambió?" → resumen de la comparación actual.
+- "¿Qué ha pasado en el proyecto?" → usa el historial completo.
+- Para costos, usa la base de precios y las reglas de estimación. Aclara que son estimados.
 """
                 with st.chat_message("assistant"):
                     with st.spinner("Analizando..."):
@@ -440,11 +340,7 @@ Estimación de costos:
                             req = urllib.request.Request(
                                 "https://api.anthropic.com/v1/messages",
                                 data=payload.encode("utf-8"),
-                                headers={
-                                    "Content-Type": "application/json",
-                                    "x-api-key": api_key,
-                                    "anthropic-version": "2023-06-01",
-                                },
+                                headers={"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"},
                                 method="POST",
                             )
                             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -453,43 +349,37 @@ Estimación de costos:
                             st.markdown(ai_text)
                             st.session_state.ai_messages.append({"role": "assistant", "content": ai_text})
                         except Exception as e:
-                            error_msg = f"Error al consultar la IA: {str(e)}"
+                            error_msg = f"Error: {str(e)}"
                             st.error(error_msg)
                             st.session_state.ai_messages.append({"role": "assistant", "content": error_msg})
         else:
             st.markdown("#### 📝 ¿Qué cambió?")
-            local_summary = generate_local_summary(diff, summary, head_name, compare_name)
-            st.markdown(local_summary)
-            st.caption("💡 Conecta una API Key de Anthropic en la barra lateral para hacer preguntas interactivas.")
+            st.markdown(generate_local_summary(diff, summary, head_name, compare_name))
+            st.caption("💡 Conecta una API Key en la barra lateral para preguntas interactivas.")
 
     # ── Detail tabs ──────────────────────────────────────────────────
     tab_labels = ["Nodos", "Barras", "Superficies", "Aberturas", "Materiales", "Secciones"]
     keys = ["nodes", "bars", "surfaces", "openings", "materials", "sections"]
     for tab_name, key in zip(tab_labels, keys):
         data = diff[key]
-        added_n = len(data.get("added", {}))
-        removed_n = len(data.get("removed", {}))
-        modified_n = len(data.get("modified", {}))
+        added_n, removed_n, modified_n = len(data.get("added", {})), len(data.get("removed", {})), len(data.get("modified", {}))
         unchanged_n = len(data.get("unchanged", {}))
         total_changes = added_n + removed_n + modified_n
-
         if total_changes == 0:
             badge = "sin cambios"
         else:
-            badge_parts = []
-            if added_n:    badge_parts.append(f"+{added_n}")
-            if removed_n:  badge_parts.append(f"-{removed_n}")
-            if modified_n: badge_parts.append(f"~{modified_n}")
-            badge = " / ".join(badge_parts)
-
+            bp = []
+            if added_n: bp.append(f"+{added_n}")
+            if removed_n: bp.append(f"-{removed_n}")
+            if modified_n: bp.append(f"~{modified_n}")
+            badge = " / ".join(bp)
         with st.expander(f"📐 {tab_name}  —  {badge}  ({unchanged_n} sin cambios)", expanded=False):
             if total_changes == 0:
                 st.caption("No hay cambios en esta categoría.")
                 continue
             for status, emoji in [("added", "🟢"), ("removed", "🔴"), ("modified", "🟡")]:
                 items = data.get(status, {})
-                if not items:
-                    continue
+                if not items: continue
                 status_label = {"added": "Agregados", "removed": "Eliminados", "modified": "Modificados"}[status]
                 st.markdown(f"**{emoji} {status_label} ({len(items)})**")
                 for uid, item in items.items():
@@ -506,11 +396,9 @@ Estimación de costos:
                                 if affected_bars or affected_surfs:
                                     st.markdown("**🔗 Elementos afectados:**")
                                     if affected_bars:
-                                        bar_labels = [b["label"] for b in affected_bars[:15]]
-                                        st.caption(f"   Barras ({len(affected_bars)}): {', '.join(bar_labels)}" + (" ..." if len(affected_bars) > 15 else ""))
+                                        st.caption(f"   Barras ({len(affected_bars)}): {', '.join(b['label'] for b in affected_bars[:15])}" + (" ..." if len(affected_bars) > 15 else ""))
                                     if affected_surfs:
-                                        surf_labels = [s["label"] for s in affected_surfs[:15]]
-                                        st.caption(f"   Superficies ({len(affected_surfs)}): {', '.join(surf_labels)}" + (" ..." if len(affected_surfs) > 15 else ""))
+                                        st.caption(f"   Superficies ({len(affected_surfs)}): {', '.join(s['label'] for s in affected_surfs[:15])}" + (" ..." if len(affected_surfs) > 15 else ""))
                     else:
                         if key == "nodes":
                             st.caption(f"   {label} — ({item['X']}, {item['Y']}, {item['Z']})")
@@ -527,23 +415,19 @@ Estimación de costos:
 #  HISTORY SIDEBAR
 # ═════════════════════════════════════════════════════════════════════════════
 
-def render_history_sidebar(project_path: Path):
-    """Render the auto-computed project history in the sidebar."""
-    entries = get_history_entries(project_path)
-
+def render_history_sidebar(history_entries: list[dict]):
     st.markdown("---")
-    st.markdown(f"#### 📜 Historial ({len(entries)} transiciones)")
+    st.markdown(f"#### 📜 Historial ({len(history_entries)} transiciones)")
 
-    if not entries:
+    if not history_entries:
         st.caption("Se necesitan al menos 2 modelos para generar el historial.")
         return
 
-    for entry in entries:  # chronological order (follows project evolution)
+    for entry in history_entries:
         s = entry.get("summary", {})
         total = s.get("total", 0)
         t_type = entry.get("transition_type", "")
 
-        # Compact stats
         stats_parts = []
         for cat in ["nodes", "bars", "surfaces", "openings", "materials", "sections"]:
             cs = s.get(cat, {})
@@ -551,26 +435,18 @@ def render_history_sidebar(project_path: Path):
             if ct > 0:
                 stats_parts.append(f"{cat[:3]}:{ct}")
 
-        # Transition type badge color
-        if "fork" in t_type:
-            badge_color = "#f59e0b"
-        elif "main" in t_type:
-            badge_color = "#06b6d4"
-        else:
-            badge_color = "#8b5cf6"
+        if "fork" in t_type: badge_color = "#f59e0b"
+        elif "main" in t_type: badge_color = "#06b6d4"
+        else: badge_color = "#8b5cf6"
 
         st.markdown(
             f'<div class="history-entry">'
-            f'<div class="timestamp"><span style="color:{badge_color};">● {t_type}</span></div>'
+            f'<div class="tag"><span style="color:{badge_color};">● {t_type}</span></div>'
             f'<div class="versions">{entry.get("compare", "?")} → {entry.get("head", "?")}</div>'
             f'<div class="stats">{total} cambios — {", ".join(stats_parts) if stats_parts else "sin cambios"}</div>'
             f'</div>',
             unsafe_allow_html=True,
         )
-
-    if st.button("🔄 Recalcular historial", key="clear_history", use_container_width=True):
-        clear_history(project_path)
-        st.rerun()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -580,7 +456,7 @@ def render_history_sidebar(project_path: Path):
 st.markdown("""
 <div class="app-header">
     <h1>🏗️ Structural VCS</h1>
-    <span class="tag">v3.0 — historial</span>
+    <span class="tag">v3.0 — historial completo</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -591,22 +467,14 @@ st.markdown("""
 
 with st.sidebar:
     st.markdown("### ⚙️ Configuración")
-
-    # ── Project selector ────────────────────────────────────────────────
     st.markdown("#### 📂 Proyecto")
     projects = get_projects()
 
     if projects:
-        selected_project = st.selectbox(
-            "Selecciona proyecto",
-            projects,
-            key="project_select",
-            help="Proyectos detectados en la carpeta projects/",
-        )
+        selected_project = st.selectbox("Selecciona proyecto", projects, key="project_select")
     else:
         selected_project = None
 
-    # ── Branch info ─────────────────────────────────────────────────────
     branches = get_branches(selected_project) if selected_project else []
 
     if selected_project and branches:
@@ -616,160 +484,91 @@ with st.sidebar:
             n_models = len(get_branch_models(selected_project, b))
             color = BRANCH_COLORS[branches.index(b) % len(BRANCH_COLORS)]
             st.markdown(
-                f'<span style="color:{color}; font-family: JetBrains Mono, monospace; '
-                f'font-size: 0.85rem; font-weight: 600;">● {b}</span> '
+                f'<span style="color:{color}; font-family: JetBrains Mono, monospace; font-size: 0.85rem; font-weight: 600;">● {b}</span> '
                 f'<span style="color:#64748b; font-size:0.75rem;">({n_models} modelos)</span>',
                 unsafe_allow_html=True,
             )
 
-    # ── AI Key ──────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("#### 🤖 API Key (IA)")
-    api_key = st.text_input(
-        "Anthropic API Key",
-        type="password",
-        help="Para el asistente de IA. Opcional.",
-    )
+    api_key = st.text_input("Anthropic API Key", type="password", help="Opcional.")
 
-    # ── Price database status ───────────────────────────────────────────
     if PRICES_PATH.exists():
         prices_data = load_prices(PRICES_PATH)
         if prices_data:
             meta = prices_data.get("_meta", {})
-            st.caption(
-                f"💰 Precios: {meta.get('currency', '?')} · "
-                f"Actualizado: {meta.get('last_updated', '?')}"
-            )
-        else:
-            st.caption("⚠️ prices.json encontrado pero con errores")
+            st.caption(f"💰 Precios: {meta.get('currency', '?')} · {meta.get('last_updated', '?')}")
     else:
-        st.caption("💡 Agrega `prices.json` junto a `app.py` para estimaciones de costo")
-
-    # ── History (rendered later if project is selected) ─────────────────
-    # Placeholder — will be filled in the main flow
+        st.caption("💡 Agrega `prices.json` para estimaciones de costo")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  MAIN CONTENT
 # ═════════════════════════════════════════════════════════════════════════════
 
-with st.expander("📖 Instrucciones — Cómo organizar los proyectos", expanded=not projects):
+with st.expander("📖 Instrucciones", expanded=not projects):
     st.markdown("""
-**1. Estructura de carpetas**
-
-Cada proyecto es una carpeta dentro de `projects/`. Las ramas son subcarpetas dentro del proyecto:
-
+**Estructura de carpetas**
 ```
 projects/
 └── Mi-Proyecto/
-    ├── .history.json              ← historial acumulativo (auto-generado)
     ├── main/
     │   ├── V1_Modelo-Base.json
-    │   ├── V2_Ampliacion-3er-Piso.json
-    │   └── V3_Cambio-Secciones.json
-    │
-    ├── feature-postensado/
-    │   ├── V4_V2_Losa-Postensada.json
-    │   └── V5_V2_Losa-Post-Refuerzo.json
-    │
-    └── alternativa-muros/
-        └── V6_V3_Muros-Cortante.json
+    │   └── V2_Ampliacion.json
+    └── feature-postensado/
+        └── V3_V2_Losa-Postensada.json
 ```
 
-**2. Convención de nombres**
+**Convención**: `V{n}_{nombre}.json` en main, `V{n}_V{origen}_{nombre}.json` en ramas.
 
-| Ubicación | Formato | Ejemplo |
-|---|---|---|
-| `main/` | `V{n}_{nombre}.json` | `V1_Modelo-Base.json` |
-| Ramas | `V{n}_V{origen}_{nombre}.json` | `V4_V2_Losa-Postensada.json` |
-
-- El primer prefijo (`V4`) es el número de versión propio
-- El segundo prefijo (`V2`) indica **de qué versión de main se desprende** la rama
-
-**3. Historial automático**
-
-Cada vez que compares dos versiones, el diff se guarda automáticamente en `.history.json`.
-El asistente de IA tiene acceso al historial completo para responder preguntas como:
-- "¿Qué ha cambiado en todo el proyecto?"
-- "¿Cuál fue la evolución de las secciones de vigas?"
-- "Dame un resumen ejecutivo de todos los cambios"
+**Historial automático**: Al cargar, se calculan TODOS los diffs consecutivos (V1→V2, V2→V3, V2→V3_branch...). La IA y el changelog los incluyen todos.
 """)
 
 if not projects:
-    st.info("No se detectaron proyectos en la carpeta `projects/`. Los modelos se gestionan desde el plugin de Robot.")
-
+    st.info("No se detectaron proyectos en `projects/`.")
 elif not selected_project:
-    st.info("Selecciona un proyecto en la barra lateral.")
-
+    st.info("Selecciona un proyecto.")
 elif not branches:
-    st.markdown(f"""
-    <div style="text-align: center; padding: 60px 20px;">
-        <div style="font-size: 3rem; margin-bottom: 12px;">🔀</div>
-        <h3 style="color: #e2e8f0; font-family: 'JetBrains Mono', monospace;">
-            Proyecto: {selected_project}
-        </h3>
-        <p style="color: #64748b;">
-            No se detectaron ramas (subcarpetas).<br>
-            Estructura esperada: <code>projects/{selected_project}/main/V1_Nombre.json</code>
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
+    st.info(f"No se detectaron ramas en `projects/{selected_project}/`.")
 else:
     project_path = PROJECTS_DIR / selected_project
 
-    # ── Collect all versions across all branches ─────────────────────
+    # ── Load all versions ────────────────────────────────────────────
     all_versions = []
     for branch in branches:
-        models = get_branch_models(selected_project, branch)
-        for m in models:
+        for m in get_branch_models(selected_project, branch):
             parsed, raw_or_err = load_model(m)
             if parsed:
                 all_versions.append({
-                    "name": m["name"],
-                    "filename": m["filename"],
-                    "branch": branch,
-                    "parsed": parsed,
-                    "raw": raw_or_err,
-                    "size_kb": m["size_kb"],
-                    "modified": m["modified"],
-                    "version_num": m["version_num"],
-                    "fork_origin": m["fork_origin"],
-                    "version_prefix": m["version_prefix"],
-                    "display_name": m["display_name"],
+                    "name": m["name"], "filename": m["filename"],
+                    "branch": branch, "parsed": parsed, "raw": raw_or_err,
+                    "size_kb": m["size_kb"], "modified": m["modified"],
+                    "version_num": m["version_num"], "fork_origin": m["fork_origin"],
+                    "version_prefix": m["version_prefix"], "display_name": m["display_name"],
                     "label": f"{m['name']} ({branch})",
                 })
             else:
-                st.warning(f"Error al parsear {branch}/{m['filename']}: {raw_or_err}")
+                st.warning(f"Error: {branch}/{m['filename']}: {raw_or_err}")
 
     if not all_versions:
-        st.info("No se encontraron modelos JSON/JSAF en las ramas de este proyecto.")
-
+        st.info("No se encontraron modelos JSON/JSAF.")
     elif len(all_versions) < 2:
-        with st.expander(f"📄 Modelos en **{selected_project}** ({len(all_versions)})", expanded=True):
-            for v in all_versions:
-                p = v["parsed"]
-                st.caption(
-                    f"**{v['name']}** (`{v['branch']}`) — {len(p['nodes'])} nodos · "
-                    f"{len(p['bars'])} barras · {len(p['surfaces'])} superficies · {len(p.get('openings', {}))} aberturas · {v['size_kb']} KB"
-                )
-        st.info("Se necesitan al menos 2 modelos para comparar versiones.")
-
+        for v in all_versions:
+            p = v["parsed"]
+            st.caption(f"**{v['name']}** (`{v['branch']}`) — {len(p['nodes'])} nodos · {len(p['bars'])} barras · {len(p['surfaces'])} superficies")
+        st.info("Se necesitan al menos 2 modelos para comparar.")
     else:
         version_labels = [v["label"] for v in all_versions]
 
-        # ── Auto-compute full history (all consecutive diffs) ────────
-        history_entries = build_full_history(
-            project_path=project_path,
-            all_versions=all_versions,
-            branches=branches,
-            diff_fn=compute_full_diff,
-            summary_fn=build_summary,
-            changelog_fn=build_changelog_json,
+        # ── Compute full history (in memory) ─────────────────────────
+        history_entries = compute_full_history(
+            all_versions, branches,
+            compute_full_diff, build_summary, build_changelog_json,
         )
+        st.session_state.history_entries = history_entries
 
         # ── File info ────────────────────────────────────────────────
-        with st.expander(f"📄 Modelos en **{selected_project}** ({len(all_versions)} en {len(branches)} ramas)", expanded=False):
+        with st.expander(f"📄 Modelos ({len(all_versions)} en {len(branches)} ramas)", expanded=False):
             for branch in branches:
                 bv = [v for v in all_versions if v["branch"] == branch]
                 if bv:
@@ -778,66 +577,67 @@ else:
                     for v in bv:
                         p = v["parsed"]
                         fork_info = f" · fork de {v['fork_origin']}" if v.get("fork_origin") else ""
-                        st.caption(
-                            f"   📄 {v['filename']} — {len(p['nodes'])} nodos · {len(p['bars'])} barras · "
-                            f"{len(p['surfaces'])} superficies · {len(p.get('openings', {}))} aberturas · {v['size_kb']} KB{fork_info}"
-                        )
+                        st.caption(f"   📄 {v['filename']} — {len(p['nodes'])} nodos · {len(p['bars'])} barras · {len(p['surfaces'])} superficies · {v['size_kb']} KB{fork_info}")
 
         # ── Version selectors ─────────────────────────────────────────
         st.markdown("---")
         col1, col2 = st.columns(2)
         with col1:
-            head_idx = st.selectbox(
-                "🔵 HEAD (versión actual)", range(len(all_versions)),
-                index=len(all_versions) - 1,
-                format_func=lambda i: version_labels[i],
-            )
+            head_idx = st.selectbox("🔵 HEAD", range(len(all_versions)), index=len(all_versions) - 1, format_func=lambda i: version_labels[i])
         with col2:
-            compare_idx = st.selectbox(
-                "🟣 Comparar con", range(len(all_versions)),
-                index=max(0, len(all_versions) - 2),
-                format_func=lambda i: version_labels[i],
-            )
+            compare_idx = st.selectbox("🟣 Comparar con", range(len(all_versions)), index=max(0, len(all_versions) - 2), format_func=lambda i: version_labels[i])
 
-        # ── Branch graph ───────────────────────────────────────────
+        # ── Branch graph ──────────────────────────────────────────────
         with st.expander("🔀 Diagrama de ramas", expanded=False):
-            svg_html = render_branch_graph_svg(all_versions, branches, head_idx, compare_idx)
-            if svg_html:
-                st.markdown(svg_html, unsafe_allow_html=True)
+            svg = render_branch_graph_svg(all_versions, branches, head_idx, compare_idx)
+            if svg:
+                st.markdown(svg, unsafe_allow_html=True)
 
-        # ── Diff + Auto-save ─────────────────────────────────────────
+        # ── Diff ──────────────────────────────────────────────────────
         if head_idx != compare_idx:
             head = all_versions[head_idx]
             compare = all_versions[compare_idx]
 
             diff = compute_full_diff(compare["parsed"], head["parsed"])
             summary = build_summary(diff)
-            report_text = diff_to_report_text(diff, head["label"], compare["label"])
             changelog = build_changelog_json(diff, head["label"], compare["label"])
 
             st.session_state.current_diff = diff
-            st.session_state.current_report_text = report_text
 
             st.markdown("---")
             render_diff_view(
                 diff, summary, head["parsed"], compare["parsed"],
                 head["label"], compare["label"], api_key,
-                project_path, selected_project, branches, all_versions,
-                prices_path=PRICES_PATH,
+                selected_project, branches, all_versions,
+                history_entries, prices_path=PRICES_PATH,
             )
 
+            # ── Sidebar: changelog download (FULL, not just current) ──
             with st.sidebar:
                 st.markdown("---")
                 st.markdown("#### 📥 Changelog")
-                st.download_button(
-                    "Descargar changelog JSON",
-                    json.dumps(changelog, indent=2, ensure_ascii=False),
-                    "changelog.json", "application/json", use_container_width=True,
-                )
-                st.caption(f"{summary['total']} cambios totales")
-        else:
-            st.warning("Selecciona dos versiones diferentes para comparar.")
 
-    # ── Render history in sidebar ────────────────────────────────────
-    with st.sidebar:
-        render_history_sidebar(project_path)
+                full_changelog = build_full_changelog_json(
+                    project_name=selected_project,
+                    branches=branches,
+                    all_versions=all_versions,
+                    history_entries=history_entries,
+                    current_changelog=changelog,
+                    current_summary=summary,
+                    head_label=head["label"],
+                    compare_label=compare["label"],
+                )
+
+                st.download_button(
+                    f"📋 Completo ({len(history_entries)} transiciones)",
+                    json.dumps(full_changelog, indent=2, ensure_ascii=False),
+                    "changelog_completo.json", "application/json",
+                    use_container_width=True,
+                )
+                st.caption(f"Incluye todas las transiciones + selección actual ({summary['total']} cambios)")
+        else:
+            st.warning("Selecciona dos versiones diferentes.")
+
+        # ── Sidebar: history ──────────────────────────────────────────
+        with st.sidebar:
+            render_history_sidebar(history_entries)
