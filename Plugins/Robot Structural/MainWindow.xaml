@@ -1,0 +1,662 @@
+﻿<Window x:Class="GithubConnect.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="GitING — Control de Versiones Estructural"
+        Width="700" Height="500"
+        MinWidth="420" MinHeight="400"
+        WindowStartupLocation="CenterScreen"
+        Background="#F4F5F7"
+        ResizeMode="NoResize">
+
+    <Window.Resources>
+
+        <!-- ── INPUTS ── -->
+        <Style x:Key="FieldBox" TargetType="TextBox">
+            <Setter Property="Background"      Value="White"/>
+            <Setter Property="Foreground"      Value="#1A1A2E"/>
+            <Setter Property="BorderBrush"     Value="#D0D9E6"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="8,6"/>
+            <Setter Property="FontFamily"      Value="Segoe UI"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="CaretBrush"      Value="#1A3A6E"/>
+        </Style>
+
+        <Style x:Key="FieldPassword" TargetType="PasswordBox">
+            <Setter Property="Background"      Value="White"/>
+            <Setter Property="Foreground"      Value="#1A1A2E"/>
+            <Setter Property="BorderBrush"     Value="#D0D9E6"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="8,6"/>
+            <Setter Property="FontFamily"      Value="Segoe UI"/>
+            <Setter Property="FontSize"        Value="13"/>
+        </Style>
+
+        <!-- ── LABELS ── -->
+        <Style x:Key="Lbl" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#374151"/>
+            <Setter Property="FontSize"   Value="12"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="Margin"     Value="0,8,0,3"/>
+        </Style>
+
+        <Style x:Key="SecHead" TargetType="TextBlock">
+            <Setter Property="Foreground"  Value="#4A5568"/>
+            <Setter Property="FontSize"    Value="12"/>
+            <Setter Property="FontWeight"  Value="SemiBold"/>
+            <Setter Property="FontFamily"  Value="Segoe UI"/>
+            <Setter Property="Margin"      Value="0,0,0,6"/>
+        </Style>
+
+        <!-- ── BOTÓN PRINCIPAL OUTLINE (Exportar) ── -->
+        <Style x:Key="BtnOutline" TargetType="Button">
+            <Setter Property="Background"      Value="White"/>
+            <Setter Property="Foreground"      Value="#1A3A6E"/>
+            <Setter Property="FontWeight"      Value="Bold"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="FontFamily"      Value="Segoe UI"/>
+            <Setter Property="BorderBrush"     Value="#1A3A6E"/>
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#EEF2F8"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.35"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── BOTÓN PRINCIPAL FILLED (Enviar) ── -->
+        <Style x:Key="BtnFilled" TargetType="Button">
+            <Setter Property="Background"      Value="#1A3A6E"/>
+            <Setter Property="Foreground"      Value="White"/>
+            <Setter Property="FontWeight"      Value="Bold"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="FontFamily"      Value="Segoe UI"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#142D56"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.3"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── BOTÓN PEQUEÑO ── -->
+        <Style x:Key="BtnSmall" TargetType="Button">
+            <Setter Property="Background"      Value="White"/>
+            <Setter Property="Foreground"      Value="#4A5568"/>
+            <Setter Property="FontSize"        Value="11"/>
+            <Setter Property="FontFamily"      Value="Segoe UI"/>
+            <Setter Property="Padding"         Value="9,5"/>
+            <Setter Property="BorderBrush"     Value="#D0D9E6"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#EEF2F8"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── BOTÓN CONECTAR ── -->
+        <Style x:Key="BtnConnect" TargetType="Button">
+            <Setter Property="Background"      Value="#1A3A6E"/>
+            <Setter Property="Foreground"      Value="White"/>
+            <Setter Property="FontWeight"      Value="SemiBold"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="FontFamily"      Value="Segoe UI"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="5" Padding="10,7">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#142D56"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── BOTÓN VERDE (crear rama) ── -->
+        <Style x:Key="BtnGreen" TargetType="Button">
+            <Setter Property="Background"      Value="#2D7D3A"/>
+            <Setter Property="Foreground"      Value="White"/>
+            <Setter Property="FontFamily"      Value="Segoe UI"/>
+            <Setter Property="FontSize"        Value="11"/>
+            <Setter Property="FontWeight"      Value="SemiBold"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="5" Padding="10,6">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#1F5C2A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ── CHECKBOX ramas ── -->
+        <Style x:Key="BranchCheckBox" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#1A1A2E"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="FontSize"   Value="13"/>
+            <Setter Property="Margin"     Value="0,5,0,0"/>
+            <Setter Property="Cursor"     Value="Hand"/>
+        </Style>
+
+        <!-- ── CARD surface ── -->
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background"      Value="White"/>
+            <Setter Property="BorderBrush"     Value="#DCE6F0"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius"    Value="8"/>
+            <Setter Property="Padding"         Value="14,12"/>
+        </Style>
+
+        <!-- ── PROGRESS BAR nativa ── -->
+        <Style x:Key="GitProgress" TargetType="ProgressBar">
+            <Setter Property="Height"          Value="6"/>
+            <Setter Property="Background"      Value="#EEF2F8"/>
+            <Setter Property="Foreground"      Value="#1A3A6E"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Grid>
+                            <Border Background="{TemplateBinding Background}"
+                                    CornerRadius="3"/>
+                            <Border x:Name="PART_Track" CornerRadius="3"/>
+                            <Border x:Name="PART_Indicator"
+                                    Background="{TemplateBinding Foreground}"
+                                    CornerRadius="3"
+                                    HorizontalAlignment="Left"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+    </Window.Resources>
+
+    <Grid>
+
+        <!-- ═══════════════════════════════════════
+             CONTENIDO PRINCIPAL
+        ═══════════════════════════════════════ -->
+        <Grid Margin="20" x:Name="MainContent">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <!-- header -->
+                <RowDefinition Height="14"/>
+                <RowDefinition Height="Auto"/>
+                <!-- tarjeta modelo -->
+                <RowDefinition Height="14"/>
+                <RowDefinition Height="*"/>
+                <!-- botones -->
+                <RowDefinition Height="14"/>
+                <RowDefinition Height="Auto"/>
+                <!-- log -->
+                <RowDefinition Height="10"/>
+                <RowDefinition Height="Auto"/>
+                <!-- progreso -->
+                <RowDefinition Height="8"/>
+                <RowDefinition Height="Auto"/>
+                <!-- status -->
+            </Grid.RowDefinitions>
+
+            <!-- HEADER: logotipo + botón configuración -->
+            <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Logotipo Git·ING -->
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock FontFamily="Segoe UI" FontSize="22" FontWeight="Normal"
+                               Foreground="#1A1A2E">Git</TextBlock>
+                    <TextBlock FontFamily="Segoe UI" FontSize="22" FontWeight="Bold"
+                               Foreground="#1A3A6E">ING</TextBlock>
+                    <TextBlock FontFamily="Segoe UI" FontSize="13" Foreground="#4A5568"
+                               VerticalAlignment="Bottom" Margin="12,0,0,3">
+                        Control de Versiones Estructural
+                    </TextBlock>
+                </StackPanel>
+
+                <Button Grid.Column="1"
+                        x:Name="BtnToggleDrawer"
+                        Content="⚙  Configuración"
+                        Style="{StaticResource BtnSmall}"
+                        Click="BtnToggleDrawer_Click"/>
+            </Grid>
+
+            <!-- TARJETA modelo -->
+            <Border Grid.Row="2" Style="{StaticResource Card}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel>
+                        <TextBlock Text="MODELO ACTUAL" Style="{StaticResource SecHead}" Margin="0"/>
+                        <TextBlock x:Name="TxtModelTitle"
+                                   Text="—"
+                                   FontFamily="Segoe UI" FontSize="16" FontWeight="Bold"
+                                   Foreground="#1A1A2E"/>
+                        <TextBlock x:Name="TxtModelStats"
+                                   Text="Extrayendo geometría…"
+                                   FontFamily="Segoe UI" FontSize="12"
+                                   Foreground="#4A5568" Margin="0,4,0,0"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Right"
+                                VerticalAlignment="Center">
+                        <TextBlock Text="DESTINO" Style="{StaticResource SecHead}"
+                                   HorizontalAlignment="Right" Margin="0"/>
+                        <TextBlock x:Name="TxtFilePreview"
+                                   Text="—"
+                                   FontFamily="Consolas" FontSize="13" FontWeight="Bold"
+                                   Foreground="#2D7D3A" HorizontalAlignment="Right"/>
+                        <TextBlock x:Name="TxtBranchPreview"
+                                   Text="—"
+                                   FontFamily="Consolas" FontSize="12"
+                                   Foreground="#4A5568" HorizontalAlignment="Right"
+                                   Margin="0,2,0,0"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- DOS BOTONES PRINCIPALES -->
+            <Grid Grid.Row="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="14"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Exportar JSAF -->
+                <Button Grid.Column="0"
+                        x:Name="BtnSaveLocal"
+                        Style="{StaticResource BtnOutline}"
+                        Click="BtnSaveLocal_Click"
+                        IsEnabled="False">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Margin="0,4,0,4">
+                        <!-- Ícono flecha abajo en círculo azul claro -->
+                        <Border Width="40" Height="40" CornerRadius="20"
+                                Background="#EEF2F8" HorizontalAlignment="Center">
+                            <TextBlock Text="↓" FontSize="20" Foreground="#1A3A6E"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="Exportar JSAF"
+                                   FontSize="13" FontWeight="Bold"
+                                   Foreground="#1A3A6E" FontFamily="Segoe UI"
+                                   HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                        <TextBlock Text="Guardar JSON localmente"
+                                   FontSize="12" Foreground="#4A5568"
+                                   FontFamily="Segoe UI"
+                                   HorizontalAlignment="Center" Margin="0,3,0,0"/>
+                    </StackPanel>
+                </Button>
+
+                <!-- Enviar al Repositorio -->
+                <Button Grid.Column="2"
+                        x:Name="BtnPushGitHub"
+                        Style="{StaticResource BtnFilled}"
+                        Click="BtnPushGitHub_Click"
+                        IsEnabled="False">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Margin="0,4,0,4">
+                        <!-- Ícono flecha arriba en círculo verde oscuro -->
+                        <Border Width="40" Height="40" CornerRadius="20"
+                                Background="#1F5C2A" HorizontalAlignment="Center">
+                            <TextBlock Text="↑" FontSize="20" Foreground="White"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="Enviar al Repositorio"
+                                   FontSize="13" FontWeight="Bold"
+                                   Foreground="White" FontFamily="Segoe UI"
+                                   HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                        <TextBlock x:Name="TxtPushHint"
+                                   Text="Conecta GitHub primero"
+                                   FontSize="12" Foreground="#C7D8F0"
+                                   FontFamily="Consolas"
+                                   HorizontalAlignment="Center" Margin="0,3,0,0"/>
+                    </StackPanel>
+                </Button>
+            </Grid>
+
+            <!-- LOG -->
+            <Border Grid.Row="6" Style="{StaticResource Card}"
+                    Padding="12,8" Height="58">
+                <ScrollViewer x:Name="LogScroll" VerticalScrollBarVisibility="Auto">
+                    <TextBlock x:Name="TxtLog"
+                               Foreground="#374151"
+                               FontFamily="Consolas" FontSize="12"
+                               TextWrapping="Wrap"/>
+                </ScrollViewer>
+            </Border>
+
+            <!-- PROGRESO -->
+            <Border Grid.Row="8" Style="{StaticResource Card}" Padding="12,10"
+                    x:Name="PanelProgress" Visibility="Collapsed">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="8"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="TxtProgressLabel"
+                                   Text="Procesando…"
+                                   FontFamily="Segoe UI" FontSize="13"
+                                   Foreground="#1A1A2E"/>
+                        <TextBlock Grid.Column="1"
+                                   x:Name="TxtProgressPct"
+                                   Text="0 %"
+                                   FontFamily="Consolas" FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#1A3A6E"/>
+                    </Grid>
+
+                    <ProgressBar Grid.Row="2"
+                                 x:Name="ProgressBar"
+                                 Style="{StaticResource GitProgress}"
+                                 Minimum="0" Maximum="100" Value="0"
+                                 IsIndeterminate="False"/>
+                </Grid>
+            </Border>
+
+            <!-- STATUS -->
+            <Border Grid.Row="10" Style="{StaticResource Card}" Padding="12,8">
+                <TextBlock x:Name="TxtStatus"
+                           Text="Extrayendo geometría…"
+                           Foreground="#D97706"
+                           FontFamily="Consolas" FontSize="13" FontWeight="SemiBold"/>
+            </Border>
+        </Grid>
+
+        <!-- ═══════════════════════════════════════
+             OVERLAY
+        ═══════════════════════════════════════ -->
+        <Border x:Name="Overlay"
+                Background="#1A1A2E"
+                Opacity="0"
+                Visibility="Collapsed"
+                MouseDown="Overlay_MouseDown"/>
+
+        <!-- ═══════════════════════════════════════
+             DRAWER — barra lateral derecha
+        ═══════════════════════════════════════ -->
+        <Border x:Name="Drawer"
+                Width="268"
+                HorizontalAlignment="Right"
+                Background="White"
+                BorderBrush="#DCE6F0"
+                BorderThickness="1,0,0,0">
+            <Border.RenderTransform>
+                <TranslateTransform x:Name="DrawerTranslate" X="268"/>
+            </Border.RenderTransform>
+
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="18,18,18,24">
+
+                    <!-- Cabecera drawer -->
+                    <Grid Margin="0,0,0,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock FontFamily="Segoe UI" FontSize="14" FontWeight="Normal"
+                                       Foreground="#1A1A2E">Git</TextBlock>
+                            <TextBlock FontFamily="Segoe UI" FontSize="14" FontWeight="Bold"
+                                       Foreground="#1A3A6E">ING</TextBlock>
+                        </StackPanel>
+                        <Button Grid.Column="1"
+                                Content="✕"
+                                Style="{StaticResource BtnSmall}"
+                                Padding="7,3"
+                                Click="BtnToggleDrawer_Click"/>
+                    </Grid>
+
+                    <Border BorderBrush="#DCE6F0" BorderThickness="0,0,0,1" Margin="0,0,0,14"/>
+
+                    <!-- ── AUTENTICACIÓN ── -->
+                    <TextBlock Text="AUTENTICACIÓN" Style="{StaticResource SecHead}"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Usuario / Org" Style="{StaticResource Lbl}" Margin="0,0,0,3"/>
+                            <TextBox x:Name="TxtOwner" Style="{StaticResource FieldBox}"
+                                     ToolTip="Nombre de usuario u organización en GitHub"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Repositorio" Style="{StaticResource Lbl}" Margin="0,0,0,3"/>
+                            <TextBox x:Name="TxtRepo" Style="{StaticResource FieldBox}"
+                                     ToolTip="Nombre exacto del repositorio en GitHub"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="Token de acceso personal" Style="{StaticResource Lbl}"/>
+                    <PasswordBox x:Name="TxtToken" Style="{StaticResource FieldPassword}"/>
+
+                    <Button x:Name="BtnConnect"
+                            Content="Conectar con GitHub"
+                            Style="{StaticResource BtnConnect}"
+                            Click="BtnConnect_Click"
+                            HorizontalAlignment="Stretch"
+                            Margin="0,8,0,0"/>
+
+                    <Border BorderBrush="#DCE6F0" BorderThickness="0,0,0,1" Margin="0,16,0,14"/>
+
+                    <!-- ── PUBLICACIÓN ── -->
+                    <TextBlock Text="PUBLICACIÓN" Style="{StaticResource SecHead}"/>
+
+                    <Border x:Name="PanelUpload"
+                            Background="#F8FAFC" BorderBrush="#DCE6F0"
+                            BorderThickness="1" CornerRadius="6"
+                            Padding="12,10"
+                            IsEnabled="False" Opacity="0.75">
+                        <StackPanel>
+
+                            <TextBlock Text="Proyecto" Style="{StaticResource Lbl}" Margin="0,0,0,3"/>
+                            <TextBox x:Name="TxtProjectName" Style="{StaticResource FieldBox}"
+                                     ToolTip="Carpeta raíz en GitHub (ej: Mi-Proyecto)"/>
+
+                            <TextBlock Text="Nombre del modelo" Style="{StaticResource Lbl}"
+                                       Margin="0,6,0,3"/>
+                            <TextBox x:Name="TxtModelName" Style="{StaticResource FieldBox}"
+                                     Text="Modelo-Base"
+                                     ToolTip="Sin prefijo de versión (ej: Ampliacion, Losa-Postensada)"/>
+
+                            <Grid Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="N° versión" Style="{StaticResource Lbl}"
+                                               Margin="0,0,0,3"/>
+                                    <TextBox x:Name="TxtVersionNumber" Style="{StaticResource FieldBox}"
+                                             Text="1"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="V. origen" Style="{StaticResource Lbl}"
+                                               Margin="0,0,0,3"/>
+                                    <TextBox x:Name="TxtOriginVersion" Style="{StaticResource FieldBox}"
+                                             ToolTip="Solo ramas feature. Vacío en main."/>
+                                </StackPanel>
+                            </Grid>
+
+                            <TextBlock Text="Mensaje del commit" Style="{StaticResource Lbl}"
+                                       Margin="0,6,0,3"/>
+                            <TextBox x:Name="TxtCommitMsg" Style="{StaticResource FieldBox}"
+                                     Text="Actualización del modelo"/>
+
+                        </StackPanel>
+                    </Border>
+
+                    <Border BorderBrush="#DCE6F0" BorderThickness="0,0,0,1" Margin="0,16,0,14"/>
+
+                    <!-- ── RAMAS ── -->
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="RAMAS" Style="{StaticResource SecHead}"
+                                   Margin="0" VerticalAlignment="Center"/>
+                        <Button Grid.Column="1"
+                                x:Name="BtnRefreshBranches"
+                                Content="↻  Actualizar"
+                                Style="{StaticResource BtnSmall}"
+                                Padding="7,3" FontSize="12"
+                                Click="BtnRefreshBranches_Click"
+                                IsEnabled="False"/>
+                    </Grid>
+
+                    <Border x:Name="PanelBranches"
+                            Background="#F8FAFC" BorderBrush="#DCE6F0"
+                            BorderThickness="1" CornerRadius="6"
+                            MinHeight="60" Padding="12,10"
+                            IsEnabled="False" Opacity="0.75">
+                        <StackPanel x:Name="StackBranches">
+                            <TextBlock Text="Conecta primero para ver las ramas"
+                                       Foreground="#4A5568" FontFamily="Segoe UI"
+                                       FontSize="12" FontStyle="Italic"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ── CREAR RAMA ── -->
+                    <TextBlock Text="CREAR RAMA" Style="{StaticResource SecHead}"
+                               Margin="0,16,0,8"/>
+
+                    <Border x:Name="PanelCreateBranch"
+                            Background="#F0FAF2" BorderBrush="#B8DDBF"
+                            BorderThickness="1" CornerRadius="6"
+                            Padding="12,10"
+                            IsEnabled="False" Opacity="0.75">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Desde:  "
+                                           Foreground="#2D7D3A" FontFamily="Segoe UI"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1"
+                                           x:Name="TxtSourceBranchLabel"
+                                           Text="(selecciona una rama)"
+                                           Foreground="#8A9AB0" FontFamily="Consolas"
+                                           FontSize="13" VerticalAlignment="Center"
+                                           FontStyle="Italic"/>
+                            </Grid>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="6"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="TxtNewBranch"
+                                         Style="{StaticResource FieldBox}"
+                                         Text="feature/"
+                                         VerticalAlignment="Center"/>
+                                <Button Grid.Column="2"
+                                        x:Name="BtnCreateBranch"
+                                        Content="Crear"
+                                        Style="{StaticResource BtnGreen}"
+                                        Click="BtnCreateBranch_Click"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+    </Grid>
+</Window>
