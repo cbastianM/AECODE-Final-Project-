@@ -211,14 +211,18 @@ def render_branch_graph_svg(all_versions, branch_names, head_idx, compare_idx):
                     pv = all_versions[pi]
                     if pv["branch"] == branch_names[0] and pv.get("version_prefix", "").upper() == fork_origin.upper():
                         ppx, ppy, _ = positions[pi]
-                        parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
-                        connected = True
-                        break
+                        parts.append(
+    f'<polyline points="{ppx},{ppy} {ppx},{py} {px},{py}" '
+    f'fill="none" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>'
+)
+connected = True
+break
             if not connected:
                 for pi in range(vidx - 1, -1, -1):
                     ppx, ppy, pb = positions[pi]
                     if pb == branch_names[0]:
-                        parts.append(f'<line x1="{ppx}" y1="{ppy}" x2="{px}" y2="{py}" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
+                        parts.append(f'<polyline points="{ppx},{ppy} {ppx},{py} {px},{py}" 'f'fill="none" stroke="{color}" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4,3"/>')
+                        connected = True
                         break
 
     for vidx in range(len(all_versions)):
